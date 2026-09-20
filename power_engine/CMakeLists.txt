@@ -28,11 +28,14 @@ if(NOT Eigen3_FOUND)
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
     GIT_TAG 3.4.0
     GIT_SHALLOW TRUE)
-  # Keep Eigen's own 900+ tests out of our ctest run (normal variable blocks
-  # Eigen's option() default before its CMakeLists is evaluated).
-  set(EIGEN_BUILD_TESTING OFF)
-  set(EIGEN_BUILD_DOC OFF)
+  # Eigen 3.4 gates its 900+ tests on the standard BUILD_TESTING option:
+  # force it OFF for the FetchContent evaluation only (normal variable
+  # blocks Eigen's option() default; restored right after).
+  set(_pe_saved_build_testing "${BUILD_TESTING}")
+  set(BUILD_TESTING OFF)
   FetchContent_MakeAvailable(eigen)
+  set(BUILD_TESTING "${_pe_saved_build_testing}")
+  unset(_pe_saved_build_testing)
   # Third-party headers must not trip our -Werror (GCC/Clang honor SYSTEM;
   # MSVC is additionally guarded by pragma push/pop at the include site).
   get_target_property(_eigen_inc eigen INTERFACE_INCLUDE_DIRECTORIES)
