@@ -91,6 +91,13 @@
     0.1dB); per-step (ZOH) drive carries an exact -ωdt/2 footprint vs
     continuous LTI (order reduction on nonsmooth forcing, textbook-verified,
     linear in f*dt) — oversample high-f points (f*dt<=0.01).
+    NOTE on "PWL sources": for ideal V/I sources the solver takes exactly
+    one value per step (nodal constraints are instantaneous), so PWL vs ZOH
+    vs midpoint sampling differ only in sample phase — measured *ratios*
+    are invariant (verified). True intra-step ramps would need source
+    companions; the footprint above is inherent to fixed-step sampling and
+    is handled by oversampling, not by drive waveform choice. Drive
+    waveforms live in `waveforms.h` (SIN/PULSE/PWL breakpoints for tests).
   - Converters: boost, synchronous buck (deadtime + body diodes clamp Vsw),
     flyback (dot-convention secondary), DCM buck — all vs closed-form theory.
   - Coupled inductors: trapezoidal 2-port Norton from L*i flux linkage,

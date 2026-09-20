@@ -8,7 +8,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 set(PE_TESTS test_rc test_rlc test_switch test_buck test_netlist test_control test_thermal   test_converters test_magnetics test_adaptive test_recovery test_ac test_steadystate
-  test_measurements)
+  test_measurements test_waveforms)
 
 add_executable(test_rc test_rc.cpp)
 add_executable(test_rlc test_rlc.cpp)
@@ -24,6 +24,7 @@ add_executable(test_recovery test_recovery.cpp)
 add_executable(test_ac test_ac.cpp)
 add_executable(test_steadystate test_steadystate.cpp)
 add_executable(test_measurements test_measurements.cpp)
+add_executable(test_waveforms test_waveforms.cpp)
 
 foreach(t IN LISTS PE_TESTS)
   target_link_libraries(${t} PRIVATE power_engine power_engine_warnings GTest::gtest_main)
@@ -43,3 +44,4 @@ add_test(NAME Recovery COMMAND test_recovery)
 add_test(NAME AcAnalysis COMMAND test_ac)
 add_test(NAME SteadyState COMMAND test_steadystate)
 add_test(NAME Measurements COMMAND test_measurements)
+add_test(NAME Waveforms COMMAND test_waveforms)

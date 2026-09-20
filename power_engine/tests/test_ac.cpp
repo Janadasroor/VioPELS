@@ -6,6 +6,7 @@
 
 #include "power_engine/ac.h"
 #include "power_engine/engine.h"
+#include "power_engine/waveforms.h"
 
 using power_engine::Engine;
 using power_engine::ac::AcPoint;
@@ -37,9 +38,9 @@ TEST(AcAnalysis, RcBodeMatchesAnalytical) {
     eng.circuit().addCapacitor("C1", 2, 0, kC, 1.0);
     eng.setStopTime(1e9);
     eng.start();
-    const double w = 2.0 * kPi * f;
     const double T = 1.0 / f;
-    auto drive = [&](double t) { eng.circuit().findDevice("V1").value = 1.0 + 0.1 * std::sin(w * t); };
+    const auto src = power_engine::waveforms::Waveform::sin(f, 0.1, 1.0);
+    auto drive = [&](double t) { eng.circuit().findDevice("V1").value = src.value(t); };
     // Settle: injection periods AND circuit transient (5*RC here).
     // Exact step counts: all periods are integer multiples of dt.
     const long long nSettle = static_cast<long long>(std::llround((5.0 * kR * kC + 2.0 * T) / kDt));
