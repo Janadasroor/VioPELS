@@ -60,6 +60,7 @@ set(POWER_ENGINE_SOURCES
   src/thermal/thermal.cpp
   src/ac/ac.cpp
   src/steadystate/steadystate.cpp
+  src/measurements/measurements.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})

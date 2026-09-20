@@ -66,6 +66,10 @@
   buffers and precomputed node rows (≈5% over the naive port at -O2, free).
   Full suite: ~0.3s Release, ~21s under ASan+UBSan (Debug).
 - Extensions (post-Phase-6):
+- Measurements (`measurements.h`, `src/measurements/`): Trace recording
+  (probe or arbitrary sampler, exact windows via interpolated cropping),
+  time-weighted stats (mean/RMS/min/max/pk-pk), windowed ripple, harmonic
+  spectrum + THD via exact-kernel correlation (integer-period windows).
 - Steady-state shooting (`steadystate.h`, `src/steadystate/`): Newton on
   the period map over continuous states (L currents, C voltages; diodes
   re-settle inside every period sim), finite-difference Jacobian,
