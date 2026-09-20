@@ -27,6 +27,16 @@ struct SolverStats {
   long long newtonIters = 0;   ///< Newton linearizations (saturable magnetics)
 };
 
+/// Opaque solver snapshot: clock, last solution vector, and full device
+/// states (trapezoidal histories, flux, diode/switch discrete states,
+/// recovery timers). Used by steady-state shooting to restart exact
+/// periodic orbits. Topology must match on restore (device count checked).
+struct SolverState {
+  double t = 0.0;
+  Eigen::VectorXd x;
+  std::vector<Device> devices;
+};
+
 /// Fixed-step trapezoidal MNA transient solver.
 /// Phase 2: ideal switches (Ron/Roff, gate-controlled, re-assembled every
 /// step) + auto-commutated diodes with in-step event iteration.
@@ -74,6 +84,13 @@ class TransientSolver {
   void step();
   /// Adaptive advance to tLimit (requires adaptive mode).
   void stepTo(double tLimit);
+
+  /// Snapshot / restore full solver state (advanced use: shooting methods).
+  SolverState saveState() const;
+  void restoreState(const SolverState& s);
+  /// Re-stamp the simulation clock (advanced use: repositioning periodic
+  /// orbits; histories and events are NOT touched — caller must align them).
+  void setTime(double t);
 
   double nodeVoltage(int node) const;
   /// Current through device (n1->n2) at current time.

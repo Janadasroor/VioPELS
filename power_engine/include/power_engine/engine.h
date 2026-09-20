@@ -36,6 +36,8 @@ class Engine {
 
   void setTimeStep(double dt);
   void setStopTime(double tStop);
+  double stopTime() const { return tStop_; }  // 0 = none
+  void clearStopTime() { tStop_ = 0.0; }
   void setCallback(SolutionCallback cb) { callback_ = std::move(cb); }
   double time() const;
   /// Opt-in adaptive stepping (solver step-doubling; composes with exact
@@ -51,6 +53,9 @@ class Engine {
   /// running; applied when simulation time reaches `at`.
   void scheduleSwitch(const std::string& name, bool closed, double at);
   void clearScheduledEvents();
+  /// Mark all scheduled edges un-applied (they fire again when reached).
+  /// Used by steady-state shooting to replay periodic gate drives.
+  void resetScheduledEvents();
   std::size_t pendingEventCount() const;
   /// Expand loaded `.control pwm` specs into exact scheduled edges over
   /// [0, stopTime]. Needs a stop time (from `.tran` or setStopTime).
@@ -87,6 +92,20 @@ class Engine {
   void start();
   void step();
   void stop();
+
+  /// Advance exactly to tEnd (requires no stop time set), leaving status
+  /// Running. Used by steady-state shooting for exact period runs.
+  void runUntil(double tEnd);
+  /// Reset loss accumulators, thermal states, and gate-edge tracking
+  /// without touching solver states (for clean per-period energies).
+  void resetAccumulators();
+  /// Solver state snapshot/restore (advanced use: shooting methods).
+  SolverState saveSolverState() const;
+  void restoreSolverState(const SolverState& s);
+  /// Reposition at an orbit start for continued simulation (shooting use):
+  /// restores solver state, re-stamps clock to t0, replays due gate edges,
+  /// refreshes accumulators + probes.
+  void rewindTo(const SolverState& state, double t0);
 
   SimulationStatus status() const { return status_; }
   const Solution& currentSolution() const { return solution_; }

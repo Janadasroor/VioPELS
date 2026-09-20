@@ -66,6 +66,13 @@
   buffers and precomputed node rows (≈5% over the naive port at -O2, free).
   Full suite: ~0.3s Release, ~21s under ASan+UBSan (Debug).
 - Extensions (post-Phase-6):
+- Steady-state shooting (`steadystate.h`, `src/steadystate/`): Newton on
+  the period map over continuous states (L currents, C voltages; diodes
+  re-settle inside every period sim), finite-difference Jacobian,
+  backtracking, per-component tolerances. Engine support: exact `runUntil`,
+  scheduled-event replay, accumulator reset, solver save/restore +
+  orbit repositioning (`rewindTo`). Thermals frozen over one period
+  (timescale-separated by design; averaged-loss outer loop is follow-up).
 - AC small-signal (`ac.h`, `src/ac/ac.cpp`): FourierMeter correlates the
   ACTUAL input/output against an exactly-integrated e^{-jwt} kernel with
   exact DC rejection; input is interval values (exact for ZOH/gates),

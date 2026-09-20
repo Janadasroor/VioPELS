@@ -145,6 +145,28 @@ void Engine::start() {
   status_ = SimulationStatus::Running;
   started_ = true;
   applyDueEvents(0.0);
+  resetAccumulators();
+  refreshSolution();
+}
+
+void Engine::resetScheduledEvents() {
+  for (auto& e : events_) e.applied = false;
+}
+
+SolverState Engine::saveSolverState() const { return solver_.saveState(); }
+
+void Engine::restoreSolverState(const SolverState& s) { solver_.restoreState(s); }
+
+void Engine::rewindTo(const SolverState& state, double t0) {
+  solver_.restoreState(state);
+  solver_.setTime(t0);
+  resetScheduledEvents();
+  applyDueEvents(t0);
+  resetAccumulators();
+  refreshSolution();
+}
+
+void Engine::resetAccumulators() {
   // (Re)build loss accumulators and gate snapshot for edge detection.
   losses_.clear();
   lastGate_.clear();
@@ -158,7 +180,17 @@ void Engine::start() {
     (void)name;
     net.reset();
   }
-  refreshSolution();
+}
+
+void Engine::runUntil(double tEnd) {
+  if (status_ != SimulationStatus::Running) throw std::runtime_error("Engine not running: call start()");
+  if (!(tEnd > solver_.time()) || !std::isfinite(tEnd)) {
+    throw std::runtime_error("runUntil needs a finite target after current time");
+  }
+  if (tStop_ > 0.0) {
+    throw std::runtime_error("runUntil needs no stop time (clearStopTime first)");
+  }
+  while (solver_.time() < tEnd - kTimeEps) step();
 }
 
 void Engine::applyDueEvents(double tNow) {

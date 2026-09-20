@@ -17,6 +17,33 @@ void TransientSolver::setStep(double dt) {
   dt_ = dt;
 }
 
+void TransientSolver::setTime(double t) {
+  if (!std::isfinite(t) || t < 0.0) throw std::runtime_error("solver time must be finite >= 0");
+  t_ = t;
+}
+
+SolverState TransientSolver::saveState() const {
+  SolverState s;
+  s.t = t_;
+  s.x = x_;
+  s.devices = circuit_.devices();
+  return s;
+}
+
+void TransientSolver::restoreState(const SolverState& s) {
+  if (s.devices.size() != circuit_.devices().size()) {
+    throw std::runtime_error("restoreState topology mismatch (device count changed)");
+  }
+  if (!std::isfinite(s.t) || s.t < 0.0) throw std::runtime_error("restoreState bad time");
+  rebuildMaps();  // topology-fixed, but keeps maps consistent by construction
+  if (s.x.size() != x_.size()) {
+    throw std::runtime_error("restoreState topology mismatch (unknown count changed)");
+  }
+  t_ = s.t;
+  x_ = s.x;
+  circuit_.mutableDevices() = s.devices;
+}
+
 void TransientSolver::setAdaptive(double tol, double dtMin, double dtMax) {
   if (!(tol > 0.0) || !std::isfinite(tol)) {
     throw std::runtime_error("adaptive tol must be positive finite");

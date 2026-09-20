@@ -1,3 +1,7 @@
+# Local-only notes: planning and agent instructions, never committed
+roadmap.md
+agent.md
+
 # Build trees (including suffixed out-of-source dirs like build-san/)
 build*/
 cmake-build-*/

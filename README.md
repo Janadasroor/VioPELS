@@ -1,6 +1,6 @@
 # VioPELS / power_engine — Phases 1–6 + extensions
 
-Headless C++20 system-level power-electronics engine (PLECS-like core).
+Headless C++20 system-level power-electronics engine.
 
 ## Scope
 - Circuit: R, L, C, V/I sources, ideal Switch (Ron/Roff, Eon/Eoff, tail),
@@ -18,8 +18,9 @@ Headless C++20 system-level power-electronics engine (PLECS-like core).
 - Electro-thermal: conduction (exact v·i) + switching (Eon/Eoff, Qrr·Vr)
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated converters: buck (CCM/DCM, open/closed-loop, sync), boost,
-  flyback; 51 tests, 12 binaries, zero warnings
+  flyback; 54 tests, 13 binaries, zero warnings
 - AC analysis: Fourier-meter Bode (RC + buck Gvd), `ac_demo` CSV
+- Steady-state shooting: periodic orbits without startup transient
 
 ## Build
 ```sh
