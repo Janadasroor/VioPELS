@@ -1,3 +1,4 @@
+#include <limits>
 #include <stdexcept>
 #include <gtest/gtest.h>
 
@@ -15,7 +16,8 @@ TEST(Waveforms, ConstantAndSine) {
   auto q = Waveform::sin(1000.0, 0.1, 0.0, 3.14159265358979 / 2.0);
   EXPECT_NEAR(q.value(0.0), 0.1, 1e-9);
   EXPECT_THROW(Waveform::sin(0.0, 1.0), std::runtime_error);
-  EXPECT_THROW(Waveform::constant(1.0 / 0.0), std::runtime_error);
+  EXPECT_THROW(Waveform::constant(std::numeric_limits<double>::infinity()),
+               std::runtime_error);
 }
 
 TEST(Waveforms, PulseTrain) {
