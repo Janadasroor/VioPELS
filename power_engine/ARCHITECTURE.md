@@ -98,6 +98,22 @@
     companions; the footprint above is inherent to fixed-step sampling and
     is handled by oversampling, not by drive waveform choice. Drive
     waveforms live in `waveforms.h` (SIN/PULSE/PWL breakpoints for tests).
+- Loop-gain analysis (`loopgain.h`, `src/loopgain/`): series injection at
+  the sense node of the closed-loop buck (v_sense = vout + vinj, Vref AC=0),
+  Gcl = vout/vinj via FourierMeter, T = -Gcl/(1+Gcl), worst-PM crossing +
+  gain-margin report. Validated: Gcl within 1.5dB/8deg on flanks, critical
+  crossover/PM within 15%/6deg of the design calculation.
+  - FINDINGS (each debugged, all documented so nobody repeats them):
+    the validated buck loop is CONDITIONALLY STABLE — LC resonance pushes
+    |T| back above 0dB, critical margin is PM ~7deg at ~1.07kHz (not 147deg
+    at the 167Hz first crossing); the ~1kHz mode rings with tau ~7ms, so
+    fixtures need bumpless PI init (new setIntegrator) + exact DC-state
+    reuse + slow injection envelope. Trailing-edge PWM is NOT a T/2
+    zero-order hold — the modulated sliver sits at the trailing edge, delay
+    D*T (verified to <2deg); ZOH overstates loop delay by (1-D)*T/2. Meter
+    is fed the continuous sine (unbiased fundamental); the staircase would
+    bias by its spectrum. Near the closed-loop peak Gcl ~ -1 makes
+    T = -Gcl/(1+Gcl) ill-conditioned: validate Gcl per-point, T via margins.
   - Converters: boost, synchronous buck (deadtime + body diodes clamp Vsw),
     flyback (dot-convention secondary), DCM buck — all vs closed-form theory.
   - Coupled inductors: trapezoidal 2-port Norton from L*i flux linkage,

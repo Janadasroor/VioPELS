@@ -62,6 +62,7 @@ set(POWER_ENGINE_SOURCES
   src/steadystate/steadystate.cpp
   src/measurements/measurements.cpp
   src/waveforms/waveforms.cpp
+  src/loopgain/loopgain.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})

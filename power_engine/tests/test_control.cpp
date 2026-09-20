@@ -67,6 +67,15 @@ TEST(PiController, SaturationAntiWindup) {
   EXPECT_DOUBLE_EQ(pi.update(-10.0, 1e-3), 0.0);
 }
 
+TEST(PiController, PresetIntegratorBumpless) {
+  PiController pi(0.07, 40.0, 0.02, 0.95);
+  pi.setIntegrator(0.4167 / 40.0);  // known steady-state duty d0
+  // First update from steady state: no rail, duty stays ~d0.
+  EXPECT_NEAR(pi.update(0.0, 1.0 / 20e3), 0.4167, 1e-3);
+  EXPECT_THROW(pi.setIntegrator(std::numeric_limits<double>::infinity()),
+               std::runtime_error);
+}
+
 TEST(PiController, TracksWithoutSteadyError) {
   PiController pi(2.0, 50.0, -10.0, 10.0);
   double u = 0.0;

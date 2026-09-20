@@ -135,6 +135,11 @@ void PiController::setGains(double kp, double ki) {
   ki_ = ki;
 }
 
+void PiController::setIntegrator(double v) {
+  requireFinite(v, "integrator");
+  integ_ = v;
+}
+
 void PiController::setLimits(double lo, double hi) {
   requireFinite(lo, "lo");
   requireFinite(hi, "hi");

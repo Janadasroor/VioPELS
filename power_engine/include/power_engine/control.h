@@ -57,6 +57,10 @@ class PiController {
   PiController(double kp, double ki, double outMin, double outMax);
 
   void reset() { integ_ = 0.0; }
+  /// Bumpless-transfer init: preset the integrator state (e.g. d0/ki when
+  /// starting from a known steady-state duty) so the first update does not
+  /// rail. Throws on non-finite input.
+  void setIntegrator(double v);
   void setGains(double kp, double ki);
   void setLimits(double lo, double hi);
   /// One control tick: err in engineering units, dt in seconds.
