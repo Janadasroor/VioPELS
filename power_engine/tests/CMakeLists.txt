@@ -23,12 +23,7 @@ add_executable(test_recovery test_recovery.cpp)
 add_executable(test_ac test_ac.cpp)
 
 foreach(t IN LISTS PE_TESTS)
-  target_link_libraries(${t} PRIVATE power_engine GTest::gtest_main)
-  if(MSVC)
-    target_compile_options(${t} PRIVATE /W4 /WX)
-  else()
-    target_compile_options(${t} PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
+  target_link_libraries(${t} PRIVATE power_engine power_engine_warnings GTest::gtest_main)
 endforeach()
 
 add_test(NAME RC_Transient COMMAND test_rc)

@@ -267,12 +267,13 @@ struct Elaborator {
   std::string scoped(const std::string& name) const { return prefix + name; }
 
   double value(const std::string& tok, int line) {
+    std::string err;
     try {
       return evalRaw(tok, params);
     } catch (const std::exception& e) {
-      fail(line, std::string("bad value '") + tok + "': " + e.what());
+      err = e.what();
     }
-    return 0.0;  // unreachable
+    fail(line, std::string("bad value '") + tok + "': " + err);
   }
 
   // Split trailing KEY=VAL tokens; returns {positionals, kv map}.
@@ -763,15 +764,7 @@ NetlistResult Parser::parse(const std::string& text,
     lockedUpper[upper(k)] = v;
   }
   Elaborator el{out, subckts, params, lockedUpper, {}, 1, "", {}, "", 0};
-  for (const auto& t : top) {
-    try {
-      el.processLine(t.text, t.no);
-    } catch (const std::runtime_error& e) {
-      // processLine already includes line numbers for its own failures;
-      // rethrow untouched.
-      throw;
-    }
-  }
+  for (const auto& t : top) el.processLine(t.text, t.no);
   out.params = params;
 
   // 4. Cross-checks: pwm/thermal reference existing switches/diodes.

@@ -2,9 +2,17 @@
 #include <cstddef>
 #include <map>
 #include <string>
+// Eigen is third-party: silence its headers under MSVC /W4 (GCC/Clang use
+// SYSTEM include dirs from CMake; that mechanism doesn't cover MSVC).
+#ifdef _MSC_VER
+#pragma warning(push, 0)
+#endif
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 #include <Eigen/SparseLU>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #include "power_engine/circuit.h"
 
