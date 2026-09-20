@@ -65,6 +65,7 @@ set(POWER_ENGINE_SOURCES
   src/loopgain/loopgain.cpp
   src/loss_tables/loss_tables.cpp
   src/electrothermal/electrothermal.cpp
+  src/multitone/multitone.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})

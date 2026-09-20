@@ -120,6 +120,14 @@
     companions; the footprint above is inherent to fixed-step sampling and
     is handled by oversampling, not by drive waveform choice. Drive
     waveforms live in `waveforms.h` (SIN/PULSE/PWL breakpoints for tests).
+- Multitone + impulse (`multitone.h`, `src/multitone/`): single-sim Bode
+  from prime-multiple tones on integer window bins (no harmonic overlap),
+  Schroeder phases + numeric crest rescale, per-tone AGC, one FourierMeter
+  per tone; ring-down fit (zero-cross freq + log-decrement tau) for loop
+  characterization. Validated vs plant model and stepped-sine spots; LC
+  ring values match. Lessons: Schroeder is near-optimal only for harmonic
+  combs (partial for log-spread — the numeric rescale carries the headroom
+  guarantee); ring fits need ripple pre-averaged (per-cycle means).
 - Loop-gain analysis (`loopgain.h`, `src/loopgain/`): series injection at
   the sense node of the closed-loop buck (v_sense = vout + vinj, Vref AC=0),
   Gcl = vout/vinj via FourierMeter, T = -Gcl/(1+Gcl), worst-PM crossing +
