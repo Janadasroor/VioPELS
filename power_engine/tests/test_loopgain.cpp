@@ -1,5 +1,6 @@
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -14,6 +15,10 @@ using power_engine::loopgain::LoopPoint;
 using power_engine::loopgain::measureBuckLoopGain;
 using power_engine::loopgain::referenceLoopGain;
 
+namespace {
+constexpr double kPi = std::numbers::pi;
+}  // namespace
+
 // Gcl = -T/(1+T) <=> T = -Gcl/(1+Gcl): spot checks.
 TEST(LoopGainMath, FromClosedLoop) {
   const std::complex<double> t = loopGainFromClosedLoop({-0.5, 0.0});
@@ -25,7 +30,7 @@ TEST(LoopGainMath, FromClosedLoop) {
   EXPECT_NEAR(t2.imag(), -0.5, 1e-12);
   // Round trip: T=2<-120deg -> Gcl -> T.
   const std::complex<double> tRef =
-      2.0 * std::exp(std::complex<double>(0.0, -120.0 * M_PI / 180.0));
+      2.0 * std::exp(std::complex<double>(0.0, -120.0 * kPi / 180.0));
   const std::complex<double> gcl = -tRef / (1.0 + tRef);
   const std::complex<double> tBack = loopGainFromClosedLoop(gcl);
   EXPECT_NEAR(tBack.real(), tRef.real(), 1e-9);
@@ -100,7 +105,7 @@ TEST(BuckLoopGain, MatchesDesignCalculation) {
     const std::complex<double> gclRef = -tRef / (1.0 + tRef);
     const std::complex<double> tMeas =
         std::polar(std::pow(10.0, points[i].magDb / 20.0),
-                   points[i].phaseDeg * M_PI / 180.0);
+                   points[i].phaseDeg * kPi / 180.0);
     const std::complex<double> gclMeas = -tMeas / (1.0 + tMeas);
     if (std::abs(gclRef) > 3.0) {
       peakMeas = std::max(peakMeas, std::abs(gclMeas));
@@ -113,8 +118,8 @@ TEST(BuckLoopGain, MatchesDesignCalculation) {
     EXPECT_NEAR(20.0 * std::log10(std::abs(gclMeas)),
                 20.0 * std::log10(std::abs(gclRef)), skirt ? 3.5 : 1.5)
         << "f=" << freqs[i];
-    EXPECT_NEAR(std::abs(wrap180(std::arg(gclMeas) * 180.0 / M_PI -
-                                 std::arg(gclRef) * 180.0 / M_PI)),
+    EXPECT_NEAR(std::abs(wrap180(std::arg(gclMeas) * 180.0 / kPi -
+                                 std::arg(gclRef) * 180.0 / kPi)),
                 0.0, skirt ? 12.0 : 8.0)
         << "f=" << freqs[i];
   }
@@ -132,7 +137,7 @@ TEST(BuckLoopGain, MatchesDesignCalculation) {
     p.freqHz = f;
     p.mag = std::abs(ref);
     p.magDb = 20.0 * std::log10(p.mag);
-    p.phaseDeg = std::arg(ref) * 180.0 / M_PI;
+    p.phaseDeg = std::arg(ref) * 180.0 / kPi;
     refPts.push_back(p);
   }
   const LoopMargins ref = computeMargins(refPts);
