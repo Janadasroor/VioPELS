@@ -120,14 +120,23 @@
     companions; the footprint above is inherent to fixed-step sampling and
     is handled by oversampling, not by drive waveform choice. Drive
     waveforms live in `waveforms.h` (SIN/PULSE/PWL breakpoints for tests).
-- Multitone + impulse (`multitone.h`, `src/multitone/`): single-sim Bode
-  from prime-multiple tones on integer window bins (no harmonic overlap),
+- Multitone + impulse (`multitone.h`, `src/multitone/`): single-sim Bode  from prime-multiple tones on integer window bins (no harmonic overlap),
   Schroeder phases + numeric crest rescale, per-tone AGC, one FourierMeter
   per tone; ring-down fit (zero-cross freq + log-decrement tau) for loop
   characterization. Validated vs plant model and stepped-sine spots; LC
   ring values match. Lessons: Schroeder is near-optimal only for harmonic
   combs (partial for log-spread — the numeric rescale carries the headroom
   guarantee); ring fits need ripple pre-averaged (per-cycle means).
+- State-space export (`statespace.h`, `src/statespace/`): continuous-time
+  (A,B,C,D) per frozen switching state from direct nodal assembly —
+  algebraic/dynamic node partition, Kron-style elimination with Eigen,
+  states = inductor currents + dynamic-node voltages, inputs = grounded
+  sources + const-1 (diode Vf affine). Restrictions (thrown): no floating
+  V-sources, no magnetics, no active recovery, nonsingular algebraic and
+  capacitance blocks. Duty averaging + textbook duty-to-output transfer
+  (Erickson §7.3 operating-point sensitivity). Validated: averaged buck
+  reproduces the lossy second-order model within 0.5%/0.5deg;
+  eigenvalues are the LC poles.
 - Loop-gain analysis (`loopgain.h`, `src/loopgain/`): series injection at
   the sense node of the closed-loop buck (v_sense = vout + vinj, Vref AC=0),
   Gcl = vout/vinj via FourierMeter, T = -Gcl/(1+Gcl), worst-PM crossing +
