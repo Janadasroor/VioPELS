@@ -348,8 +348,20 @@ bool Engine::hasLossModel(const std::string& device) const {
 }
 
 double Engine::deviceTemp(const std::string& device) const {
+  auto ov = tjOverrides_.find(device);
+  if (ov != tjOverrides_.end()) return ov->second;
   auto it = thermals_.find(device);
   return it == thermals_.end() ? 25.0 : it->second.tj();
+}
+
+void Engine::setJunctionTempOverride(const std::string& device, double tj) {
+  circuit_.findDevice(device);  // throws if unknown
+  if (!std::isfinite(tj)) throw std::runtime_error("override Tj must be finite");
+  tjOverrides_.insert_or_assign(device, tj);
+}
+
+void Engine::clearJunctionTempOverride(const std::string& device) {
+  tjOverrides_.erase(device);
 }
 
 void Engine::applyLossModels() {

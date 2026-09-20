@@ -75,7 +75,14 @@ class Engine {
   /// inline). Mirrors applyThermalSpecs.
   void applyLossModels();
   /// Junction temperature if a thermal network is attached, else 25C ambient.
+  /// A junction-temp override (setJunctionTempOverride) wins over both and
+  /// lets an outer loop impose Tj (averaged-loss electro-thermal stepping);
+  /// do not combine an override with an attached thermal network.
   double deviceTemp(const std::string& device) const;
+  /// Pin Tj for a switch/diode (outer-loop electro-thermal stepping).
+  /// Persists across resetAccumulators (window re-runs keep the imposed Tj).
+  void setJunctionTempOverride(const std::string& device, double tj);
+  void clearJunctionTempOverride(const std::string& device);
   /// Attach a thermal network to a switch/diode (loss-driven Tj).
   /// Conduction loss = integral of v*i (exact in the ideal model:
   /// switch I^2*Ron, diode Vf*I + I^2*Ron); switching loss = Eon/Eoff
@@ -153,6 +160,7 @@ class Engine {
   // snapshots for edge I/V sampling (histories are post-step).
   std::map<std::string, loss::DeviceLossModel> lossModels_;
   std::map<std::string, std::pair<double, double>> preStepVi_;
+  std::map<std::string, double> tjOverrides_;  // pinned Tj (outer loop)
 };
 
 }  // namespace power_engine

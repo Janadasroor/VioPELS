@@ -70,6 +70,15 @@
   Validated: constant tables reproduce scalar accounting; bilinear E=k*I*V
   buck switching and coupled Ron(Tj) electro-thermal match closed-form
   analytics within 5%.
+- Electro-thermal stepping (`electrothermal.h`): timescale-separated
+  fixed point. Within-step iteration is unnecessary (one sub-step moves Tj
+  by ~P*dt/C, so explicit coupling is consistent to that order); the
+  averaged-loss outer loop (electrical window -> P_avg -> macro thermal
+  step -> Tj override, repeat to |dTj| < tol) reaches thermal equilibrium
+  without brute-force warm-up. `setJunctionTempOverride` pins Tj (wins
+  over attached networks; never combine both). Validated: efficiency
+  droop vs ambient (25/85/125C) within 5% of the coupled closed form;
+  brute-force transient agrees with the outer loop.
 - Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
   thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
 - Performance (Phase 6, measured on 6ms/12k-step open-loop buck, gcc):
