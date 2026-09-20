@@ -28,13 +28,21 @@ if(NOT Eigen3_FOUND)
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
     GIT_TAG 3.4.0
     GIT_SHALLOW TRUE)
-  # Eigen 3.4 gates its 900+ tests on the standard BUILD_TESTING option:
-  # force it OFF for the FetchContent evaluation only (normal variable
-  # blocks Eigen's option() default; restored right after).
-  set(_pe_saved_build_testing "${BUILD_TESTING}")
-  set(BUILD_TESTING OFF)
+  # Eigen 3.4 gates its 900+ tests on the standard BUILD_TESTING option.
+  # Force it OFF for the FetchContent evaluation only. NOTE: this must be a
+  # CACHE FORCE (not a normal variable): Eigen's cmake_minimum_required
+  # predates CMP0077, so its option() call clears normal variables (seen in
+  # CI logs). Restored right after.
+  if(DEFINED BUILD_TESTING)
+    set(_pe_saved_build_testing "${BUILD_TESTING}")
+  endif()
+  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(eigen)
-  set(BUILD_TESTING "${_pe_saved_build_testing}")
+  if(DEFINED _pe_saved_build_testing)
+    set(BUILD_TESTING "${_pe_saved_build_testing}" CACHE BOOL "" FORCE)
+  else()
+    unset(BUILD_TESTING CACHE)
+  endif()
   unset(_pe_saved_build_testing)
   # Third-party headers must not trip our -Werror (GCC/Clang honor SYSTEM;
   # MSVC is additionally guarded by pragma push/pop at the include site).
