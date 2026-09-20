@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "power_engine/circuit.h"
+#include "power_engine/loss_tables.h"
 
 namespace power_engine {
 namespace netlist {
@@ -49,6 +50,7 @@ struct NetlistResult {
   Circuit circuit;
   std::map<std::string, double> params;
   std::map<std::string, ModelDef> models;
+  std::map<std::string, loss::Table> tables;  ///< .etable defs (UPPER name)
   TranSpec tran;
   std::vector<PwmSpec> pwms;
   std::vector<ThermalSpec> thermals;
@@ -73,6 +75,13 @@ struct NetlistResult {
 /// Mname d s MODEL=m ...  (ideal MOSFET, logic gate: alias of S)
 /// Qname c e MODEL=m ...  (ideal IGBT, logic gate: alias of S)
 /// Dname anode cathode [MODEL=m] [VF=..] [RON=..] [ROFF=..]
+/// Switches accept EON_TABLE=/EOFF_TABLE=/RON_TABLE= (.etable names, via
+/// MODEL str params or inline, inline wins); diodes accept RON_TABLE=/
+/// VF_TABLE= (EON/EOFF tables on diodes are rejected: diodes book QRR).
+/// .etable NAME [I=..] [V=..] [TJ=..] (E=..|R=..|VF=..): datasheet loss
+/// table (comma-separated values; row-major, last axis fastest; clamped
+/// outside the grid). E = switching energy [J], R = resistance [Ohm],
+/// VF = forward drop [V].
 /// Tname n1 n2 n3 n4 [RATIO=n]   (ideal transformer, n:1)
 /// Wname n1 n2 n3 n4 L1=.. L2=.. (K=..|M=..) [IC1=..] [IC2=..]
 /// Yname n1 n2 LUNSAT=.. LSAT=.. ISAT=.. [IC=..]  (saturable inductor)

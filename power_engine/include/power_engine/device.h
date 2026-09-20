@@ -72,6 +72,13 @@ struct Device {
   double recI = 0.0;  // recovery amplitude [A, branch reference direction]
   double recE = 0.0;  // pending release energy [J], consumed by Engine losses
   bool closedPrev = false;  // gate state at previous step (edge detection)
+  // Datasheet loss-table references (netlist .etable names, UPPER-cased).
+  // Empty = inactive (scalar eon/eoff/ron/vf used). Resolved by
+  // Engine::applyLossModels into DeviceLossModel attachments.
+  std::string eonTable;   // switch turn-on energy E(I,V,TJ)
+  std::string eoffTable;  // switch turn-off energy E(I,V,TJ)
+  std::string ronTable;   // on-resistance R(TJ), switch + diode
+  std::string vfTable;    // forward drop VF(TJ), diode
 };
 
 /// Saturable-inductor flux linkage shared by Circuit (init) and the

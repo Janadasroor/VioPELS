@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "power_engine/circuit.h"
+#include "power_engine/loss_tables.h"
 #include "power_engine/netlist.h"
 #include "power_engine/solver.h"
 #include "power_engine/thermal.h"
@@ -62,6 +63,19 @@ class Engine {
   /// Explicit on purpose: manual gate drives and auto PWM don't mix.
   void applyPwmSpecs();
 
+  /// Attach a datasheet loss model to a switch/diode (table-driven Eon/Eoff
+  /// sampled at edges + Tj-dependent Ron/Vf refreshed every sub-step).
+  /// Conduction loss stays integral-of-v*i (exact, automatically consistent
+  /// with the Tj-stamped Ron/Vf). Coupling is one-way explicit (Tj from the
+  /// previous sub-step; iteration is a later roadmap item).
+  void attachLossModel(const std::string& device, loss::DeviceLossModel model);
+  bool hasLossModel(const std::string& device) const;
+  /// Attach all `.etable`-referenced loss models from the loaded netlist
+  /// (device EON_TABLE/EOFF_TABLE/RON_TABLE/VF_TABLE refs, via MODEL or
+  /// inline). Mirrors applyThermalSpecs.
+  void applyLossModels();
+  /// Junction temperature if a thermal network is attached, else 25C ambient.
+  double deviceTemp(const std::string& device) const;
   /// Attach a thermal network to a switch/diode (loss-driven Tj).
   /// Conduction loss = integral of v*i (exact in the ideal model:
   /// switch I^2*Ron, diode Vf*I + I^2*Ron); switching loss = Eon/Eoff
@@ -114,6 +128,10 @@ class Engine {
   void refreshSolution();
   void applyDueEvents(double tNow);
   void updateLosses(double dtSub);
+  /// Snapshot pre-sub-step (v,i) of modeled switches/diodes for edge I/V
+  /// sampling, and refresh their Tj-dependent ron/vf from current Tj.
+  /// No-op when no loss models are attached (zero overhead otherwise).
+  void preStepLossHooks();
 
   Circuit circuit_;
   TransientSolver solver_;
@@ -131,6 +149,10 @@ class Engine {
   std::map<std::string, thermal::DeviceLoss> losses_;      // all S/D, reset at start()
   std::map<std::string, thermal::ThermalNetwork> thermals_;  // attached networks
   std::map<std::string, bool> lastGate_;  // gate states after last sub-step
+  // Datasheet loss models (empty = scalar path) + pre-sub-step (v,i)
+  // snapshots for edge I/V sampling (histories are post-step).
+  std::map<std::string, loss::DeviceLossModel> lossModels_;
+  std::map<std::string, std::pair<double, double>> preStepVi_;
 };
 
 }  // namespace power_engine

@@ -354,6 +354,7 @@ struct Elaborator {
         if (pos.size() != 2) fail(line, "switch needs: Sname n1 n2 [MODEL=..] ..");
         double ron = 5e-3, roff = 1e6, eon = 0.0, eoff = 0.0, ttail = 0.0, tailk = 0.1;
         bool closed = false;
+        std::string eonTab, eoffTab, ronTab;  // .etable refs (UPPER)
         auto mit = kv.find("MODEL");
         if (mit != kv.end()) {
           auto m = out.models.find(upper(mit->second));
@@ -370,12 +371,30 @@ struct Elaborator {
             auto it = m->second.num.find(k);
             return it == m->second.num.end() ? d : it->second;
           };
+          auto gs = [&](const char* k) {
+            auto it = m->second.str.find(k);
+            return it == m->second.str.end() ? std::string{} : it->second;
+          };
           ron = g("RON", ron);
           roff = g("ROFF", roff);
           eon = g("EON", 0.0);
           eoff = g("EOFF", 0.0);
           ttail = g("TTAIL", 0.0);
           tailk = g("TAILK", 0.1);
+          eonTab = gs("EON_TABLE");
+          eoffTab = gs("EOFF_TABLE");
+          ronTab = gs("RON_TABLE");
+        }
+        // Device-level loss-table refs win over MODEL (stored UPPER-cased).
+        {
+          auto dv = [&](const char* k, std::string dflt) {
+            auto it2 = kv.find(k);
+            return it2 == kv.end() ? dflt : upper(it2->second);
+          };
+          eonTab = dv("EON_TABLE", upper(eonTab));
+          eoffTab = dv("EOFF_TABLE", upper(eoffTab));
+          ronTab = dv("RON_TABLE", upper(ronTab));
+          if (kv.find("VF_TABLE") != kv.end()) fail(line, "switches use RON_TABLE, not VF_TABLE");
         }
         bool hasRon = false, hasRoff = false;
         ron = kvNum(kv, "RON", ron, line, &hasRon);
@@ -403,12 +422,17 @@ struct Elaborator {
         }
         c.addSwitch(name, nodeId(pos[0], line), nodeId(pos[1], line), ron, roff, closed, eon,
                     eoff, ttail, tailk);
+        Device& ds = c.findDevice(name);
+        ds.eonTable = eonTab;
+        ds.eoffTable = eoffTab;
+        ds.ronTable = ronTab;
         lastSwitchOrDiode = name;
         break;
       }
       case 'D': {
         if (pos.size() != 2) fail(line, "diode needs: Dname anode cathode [MODEL=..] ..");
         double vf = 0.0, ron = 10e-3, roff = 1e6, qrr = 0.0, trr = 0.0;
+        std::string ronTab, vfTab;  // .etable refs (UPPER)
         auto mit = kv.find("MODEL");
         if (mit != kv.end()) {
           auto m = out.models.find(upper(mit->second));
@@ -420,18 +444,42 @@ struct Elaborator {
             auto it = m->second.num.find(k);
             return it == m->second.num.end() ? d : it->second;
           };
+          auto gs = [&](const char* k) {
+            auto it = m->second.str.find(k);
+            return it == m->second.str.end() ? std::string{} : it->second;
+          };
           vf = g("VF", vf);
           ron = g("RON", ron);
           roff = g("ROFF", roff);
           qrr = g("QRR", 0.0);
           trr = g("TRR", 0.0);
+          ronTab = gs("RON_TABLE");
+          vfTab = gs("VF_TABLE");
+          if (m->second.str.count("EON_TABLE") != 0u ||
+              m->second.str.count("EOFF_TABLE") != 0u) {
+            fail(line, "diodes use recovery (QRR), not EON/EOFF tables");
+          }
         }
         vf = kvNum(kv, "VF", vf, line);
         ron = kvNum(kv, "RON", ron, line);
         roff = kvNum(kv, "ROFF", roff, line);
         qrr = kvNum(kv, "QRR", qrr, line);
         trr = kvNum(kv, "TRR", trr, line);
+        {
+          auto dv = [&](const char* k, std::string dflt) {
+            auto it2 = kv.find(k);
+            return it2 == kv.end() ? dflt : upper(it2->second);
+          };
+          ronTab = dv("RON_TABLE", upper(ronTab));
+          vfTab = dv("VF_TABLE", upper(vfTab));
+          if (kv.find("EON_TABLE") != kv.end() || kv.find("EOFF_TABLE") != kv.end()) {
+            fail(line, "diodes use recovery (QRR), not EON/EOFF tables");
+          }
+        }
         c.addDiode(name, nodeId(pos[0], line), nodeId(pos[1], line), vf, ron, roff, qrr, trr);
+        Device& dd = c.findDevice(name);
+        dd.ronTable = ronTab;
+        dd.vfTable = vfTab;
         lastSwitchOrDiode = name;
         break;
       }
@@ -656,6 +704,67 @@ struct Elaborator {
       out.thermals.push_back(t);
       return;
     }
+    if (dir == ".ETABLE") {
+      // Datasheet loss table:
+      // .etable NAME [I=a,b,..] [V=..] [TJ=..] (E=.. | R=.. | VF=..)
+      // Exactly one value key: E = switching energy [J], R = resistance
+      // [Ohm], VF = forward drop [V]. Values are row-major with the LAST
+      // listed axis fastest ((i*V+j)*TJ+k for I,V,TJ). Single-point axes
+      // allowed (constant along them). Out-of-range lookups clamp.
+      if (toks.size() < 3) fail(line, ".etable needs: .etable NAME AXES.. E|R|VF=..");
+      std::vector<std::string> pos;
+      std::map<std::string, std::string> kv;
+      splitKv(toks, 2, pos, kv, line);
+      auto csv = [&](const char* k) {
+        std::vector<double> vs;
+        auto it = kv.find(k);
+        if (it == kv.end()) return vs;
+        std::string s = it->second;
+        std::size_t a = 0;
+        while (a <= s.size()) {
+          const auto c = s.find(',', a);
+          const std::string tok = trim(s.substr(a, c == std::string::npos ? c : c - a));
+          if (tok.empty()) fail(line, "empty entry in .etable " + std::string(k));
+          vs.push_back(value(tok, line));
+          if (c == std::string::npos) break;
+          a = c + 1;
+        }
+        return vs;
+      };
+      const std::vector<double> gi = csv("I");
+      const std::vector<double> gv = csv("V");
+      const std::vector<double> gt = csv("TJ");
+      const bool hasE = kv.count("E") != 0u;
+      const bool hasR = kv.count("R") != 0u;
+      const bool hasVf = kv.count("VF") != 0u;
+      if (static_cast<int>(hasE) + static_cast<int>(hasR) + static_cast<int>(hasVf) != 1) {
+        fail(line, ".etable needs exactly one of E=, R=, VF=");
+      }
+      const std::vector<double> vals =
+          csv(hasE ? "E" : (hasR ? "R" : "VF"));
+      std::vector<std::string> axes;
+      std::vector<std::vector<double>> grids;
+      if (!gi.empty()) {
+        axes.emplace_back("I");
+        grids.push_back(gi);
+      }
+      if (!gv.empty()) {
+        axes.emplace_back("V");
+        grids.push_back(gv);
+      }
+      if (!gt.empty()) {
+        axes.emplace_back("TJ");
+        grids.push_back(gt);
+      }
+      if (axes.empty()) fail(line, ".etable needs at least one axis (I=, V=, TJ=)");
+      try {
+        out.tables[upper(toks[1])] = loss::Table(
+            std::move(axes), std::move(grids), vals, hasE ? "E" : (hasR ? "R" : "VF"));
+      } catch (const std::exception& e) {
+        fail(line, std::string(".etable '") + toks[1] + "': " + e.what());
+      }
+      return;
+    }
     if (dir == ".ENDS" || dir == ".END") return;  // handled by outer parse loop
     fail(line, "unknown directive '" + toks[0] + "'");
   }
@@ -817,6 +926,22 @@ std::string NetlistResult::serialize() const {
     for (const auto& [pk, pv] : m.str) os << " " << pk << "=" << pv;
     os << "\n";
   }
+  for (const auto& [k, t] : tables) {
+    os << ".etable " << k;
+    for (std::size_t i = 0; i < t.axes().size(); ++i) {
+      os << " " << t.axes()[i] << "=";
+      for (std::size_t j = 0; j < t.grids()[i].size(); ++j) {
+        if (j != 0) os << ",";
+        os << t.grids()[i][j];
+      }
+    }
+    os << " " << (t.tag().empty() ? "E" : t.tag()) << "=";
+    for (std::size_t j = 0; j < t.values().size(); ++j) {
+      if (j != 0) os << ",";
+      os << t.values()[j];
+    }
+    os << "\n";
+  }
   auto nid = [](int n) { return n == 0 ? std::string("0") : "N" + std::to_string(n); };
   for (const auto& d : circuit.devices()) {
     switch (d.type) {
@@ -843,12 +968,17 @@ std::string NetlistResult::serialize() const {
         if (d.eon > 0.0) os << " EON=" << d.eon;
         if (d.eoff > 0.0) os << " EOFF=" << d.eoff;
         if (d.ttail > 0.0) os << " TTAIL=" << d.ttail << " TAILK=" << d.tailk;
+        if (!d.eonTable.empty()) os << " EON_TABLE=" << d.eonTable;
+        if (!d.eoffTable.empty()) os << " EOFF_TABLE=" << d.eoffTable;
+        if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
         os << "\n";
         break;
       case DeviceType::Diode:
         os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " VF=" << d.vf << " RON=" << d.ron
            << " ROFF=" << d.roff;
         if (d.qrr > 0.0) os << " QRR=" << d.qrr << " TRR=" << d.trr;
+        if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
+        if (!d.vfTable.empty()) os << " VF_TABLE=" << d.vfTable;
         os << "\n";
         break;
       case DeviceType::Transformer:

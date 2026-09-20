@@ -217,6 +217,7 @@ void Engine::step() {
         if (!e.applied && e.at > tNow + kTimeEps && e.at < tNext) tNext = e.at;
       }
       if (tNext > tTarget) tNext = tTarget;
+      preStepLossHooks();
       if (solver_.adaptive()) {
         const double tBefore = solver_.time();
         solver_.stepTo(tNext);  // error-controlled, lands exactly
@@ -261,17 +262,52 @@ void Engine::refreshSolution() {
   }
 }
 
+void Engine::preStepLossHooks() {
+  if (lossModels_.empty()) return;
+  for (const auto& [name, model] : lossModels_) {
+    Device& d = circuit_.findDevice(name);
+    // Pre-solve branch quantities (histories are still pre-sub-step here).
+    preStepVi_[name] = {d.v_prev, d.i_prev};
+    // One-way explicit Tj coupling: refresh conduction params from the
+    // current Tj before stamping (iteration is a later roadmap item).
+    const double tj = deviceTemp(name);
+    if (model.hasRon()) d.ron = model.ronTj.at({{"TJ", tj}});
+    if (model.hasVf()) d.vf = model.vfTj.at({{"TJ", tj}});
+  }
+}
+
 void Engine::updateLosses(double dtSub) {
   // Gate-edge detection (scheduled or manual setSwitch): newly closed ->
   // Eon, newly opened -> Eoff. Edge energy drives thermals as an impulse
   // spread over this sub-step (exact in energy).
+  // Edge I/V sampling (histories are POST-sub-step, i.e. post-edge):
+  // turn-on needs pre-edge blocking V + post-edge commutated I;
+  // turn-off needs pre-edge on-current I + post-edge blocking V.
+  // Pre-edge (v,i) come from the preStepVi_ snapshot taken before the solve.
   std::map<std::string, double> edgeEnergy;
   for (const auto& d : circuit_.devices()) {
     if (d.type != DeviceType::Switch) continue;
     auto it = lastGate_.find(d.name);
     const bool before = (it == lastGate_.end()) ? d.closed : it->second;
     if (d.closed != before) {
-      const double e = d.closed ? d.eon : d.eoff;
+      double e = d.closed ? d.eon : d.eoff;
+      auto mit = lossModels_.find(d.name);
+      if (mit != lossModels_.end()) {
+        const loss::Table& tab = d.closed ? mit->second.eon : mit->second.eoff;
+        if (!tab.empty()) {
+          const auto pit = preStepVi_.find(d.name);
+          const double vPre = (pit == preStepVi_.end()) ? 0.0 : pit->second.first;
+          const double iPre = (pit == preStepVi_.end()) ? 0.0 : pit->second.second;
+          // Turn-on: V = pre-edge blocking, I = post-edge (d.i_prev);
+          // turn-off: I = pre-edge, V = post-edge (d.v_prev).
+          const double vEdge = d.closed ? vPre : d.v_prev;
+          const double iEdge = d.closed ? d.i_prev : iPre;
+          const double tj = deviceTemp(d.name);
+          e = tab.at({{"I", std::abs(iEdge)},
+                      {"V", std::abs(vEdge)},
+                      {"TJ", tj}});
+        }
+      }
       losses_[d.name].esw += e;
       edgeEnergy[d.name] += e;
       lastGate_[d.name] = d.closed;
@@ -293,6 +329,56 @@ void Engine::updateLosses(double dtSub) {
     }
     auto th = thermals_.find(name);
     if (th != thermals_.end()) th->second.step(pDrive, dtSub);
+  }
+}
+
+void Engine::attachLossModel(const std::string& device, loss::DeviceLossModel model) {
+  const Device& d = circuit_.findDevice(device);  // throws if unknown
+  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) {
+    throw std::runtime_error("attachLossModel needs a switch or diode: " + device);
+  }
+  if (d.type == DeviceType::Diode && model.hasSwitching()) {
+    throw std::runtime_error("attachLossModel: diodes use recovery (QRR), not EON/EOFF tables");
+  }
+  lossModels_.insert_or_assign(device, std::move(model));
+}
+
+bool Engine::hasLossModel(const std::string& device) const {
+  return lossModels_.find(device) != lossModels_.end();
+}
+
+double Engine::deviceTemp(const std::string& device) const {
+  auto it = thermals_.find(device);
+  return it == thermals_.end() ? 25.0 : it->second.tj();
+}
+
+void Engine::applyLossModels() {
+  if (!hasNetlist()) {
+    throw std::runtime_error("applyLossModels needs a loaded netlist with .etable");
+  }
+  for (const auto& d : circuit_.devices()) {
+    if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) continue;
+    if (d.eonTable.empty() && d.eoffTable.empty() && d.ronTable.empty() &&
+        d.vfTable.empty()) {
+      continue;
+    }
+    auto resolve = [&](const std::string& ref) -> loss::Table {
+      if (ref.empty()) return loss::Table{};
+      auto it = net_.tables.find(ref);
+      if (it == net_.tables.end()) {
+        throw std::runtime_error("applyLossModels: unknown .etable '" + ref + "'");
+      }
+      return it->second;
+    };
+    if (d.type == DeviceType::Diode && (!d.eonTable.empty() || !d.eoffTable.empty())) {
+      throw std::runtime_error("applyLossModels: diodes use recovery (QRR), not EON/EOFF tables");
+    }
+    loss::DeviceLossModel model;
+    model.eon = resolve(d.eonTable);
+    model.eoff = resolve(d.eoffTable);
+    model.ronTj = resolve(d.ronTable);
+    model.vfTj = resolve(d.vfTable);
+    lossModels_.insert_or_assign(d.name, std::move(model));
   }
 }
 

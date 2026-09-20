@@ -57,6 +57,19 @@
   explicit Euler at solver sub-step dt (µs « ms–s time constants).
   `attachThermal` / `applyThermalSpecs`, `junctionTemp`, `deviceLoss`,
   `tj:` probes. Diode reverse recovery (Qrr) not modeled (ideal).
+- Datasheet loss tables (`loss_tables.h`, `src/loss_tables/`): N-D grid
+  tables (axes I/V/TJ) with multilinear interp + edge clamping, never
+  extrapolation. Switch Eon/Eoff(I,V,TJ) sampled at gate edges — turn-on
+  uses pre-edge blocking V + post-edge commutated I, turn-off the reverse
+  (histories are post-step, so pre-edge comes from a pre-solve snapshot).
+  Tj-dependent conduction: Ron(TJ)/Vf(TJ) tables refresh device params
+  every sub-step (one-way explicit coupling; iteration is a later item);
+  conduction loss stays ∫v·i (exact, self-consistent). Tj = thermal Tj or
+  25C ambient. Netlist: `.etable` defs + EON_TABLE/EOFF_TABLE/RON_TABLE/
+  VF_TABLE refs (via MODEL or inline), `Engine::applyLossModels`.
+  Validated: constant tables reproduce scalar accounting; bilinear E=k*I*V
+  buck switching and coupled Ron(Tj) electro-thermal match closed-form
+  analytics within 5%.
 - Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
   thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
 - Performance (Phase 6, measured on 6ms/12k-step open-loop buck, gcc):
