@@ -1,0 +1,49 @@
+# Build trees (including suffixed out-of-source dirs like build-san/)
+build*/
+cmake-build-*/
+_build/
+
+# CMake / CTest artifacts (in-source configure leftovers)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+CPackConfig.cmake
+CPackSourceConfig.cmake
+install_manifest.txt
+
+# Compiled objects / libs / binaries
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.lib
+*.exe
+
+# FetchContent / externals
+build/_deps/
+
+# IDE / editors / language servers
+.vscode/
+.idea/
+.cache/
+compile_commands.json
+*.swp
+*~
+.DS_Store
+
+# Local install prefix used for smoke tests
+install/
+
+# Coverage / profiling / sanitizer logs
+*.gcda
+*.gcno
+*.gcov
+coverage/
+perf.data
+perf.data.old
+gmon.out
