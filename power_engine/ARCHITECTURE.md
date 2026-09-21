@@ -89,6 +89,17 @@
   over attached networks; never combine both). Validated: efficiency
   droop vs ambient (25/85/125C) within 5% of the coupled closed form;
   brute-force transient agrees with the outer loop.
+- Machines (`machine.h`, `src/machine/`): exact J/B mechanical stepping
+  (closed-form, B=0 branch); sinusoidal PMSM via phase-domain back-EMF
+  sources (value-only drive) + Park transform + power-balance torque
+  (exact, no speed singularity), co-simulated per electrical step
+  (timescale-separated explicit coupling, same philosophy as thermal).
+  Hysteretic id=0 drive (self-commutated by construction) with speed PI +
+  velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
+  be designed against the real loop (sluggish ki fails load recovery,
+  hot ki rings — feedforward fixes ramp lag honestly); sim dt must
+  resolve hysteresis crossings with margin (overshoot = slope*dt << band).
+  Motor-drive demo prints speed/iq/torque CSV.
   - Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
     thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
   - Event sub-stepping hardening: arbitrary-duty PWM edges land at arbitrary

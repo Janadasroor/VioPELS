@@ -67,6 +67,7 @@ set(POWER_ENGINE_SOURCES
   src/electrothermal/electrothermal.cpp
   src/multitone/multitone.cpp
   src/statespace/statespace.cpp
+  src/machine/machine.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})
