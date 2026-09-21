@@ -100,6 +100,16 @@
   hot ki rings — feedforward fixes ramp lag honestly); sim dt must
   resolve hysteresis crossings with margin (overshoot = slope*dt << band).
   Motor-drive demo prints speed/iq/torque CSV.
+- Hysteresis material (`magnetics.h`, `src/magnetics/`): saturating-offset
+  memory B(H) = Bs*tanh((H-s)/a), s in [-Hc,+Hc] tracking +H. Major limbs
+  ride bare shifted branches (CCW = positive loss); nested loops close
+  exactly; saturation wipes outer memory; lens-shaped minors; Hc=0 is
+  anhysteretic. Rate-independent (no dt). Validated: coercivity sides,
+  remanence, saturation, area vs exact 4*Hc*B integral (2%), periodicity,
+  step-invariance. Lesson: naive shifted-tanh with the WRONG SIGN gives a
+  mirrored (clockwise, negative-area) loop — pin coercivity sides AND area
+  sign, not just magnitudes. Classical eddy density alongside; reluctance
+  network + winding interfaces are part 2.
 - Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs
   (loadNetlist + setParameter re-elaboration per point), setup callback
   for wiring (PWM/thermal/loss specs, SolutionCallback windowed stats)
