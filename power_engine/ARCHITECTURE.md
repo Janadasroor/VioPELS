@@ -100,6 +100,14 @@
   hot ki rings — feedforward fixes ramp lag honestly); sim dt must
   resolve hysteresis crossings with margin (overshoot = slope*dt << band).
   Motor-drive demo prints speed/iq/torque CSV.
+- Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs
+  (loadNetlist + setParameter re-elaboration per point), setup callback
+  for wiring (PWM/thermal/loss specs, SolutionCallback windowed stats)
+  and measure callback for outputs, per-row error capture (or
+  stopOnError), CSV table. Lessons: cumulative loss energies include
+  startup transient (edge-counted switching is transient-free; compare
+  conduction by shape/monotonicity or POP-init); light-load buck runs
+  DCM (Vout rises — use measured Vout in analytics, never ideal D*Vin).
 - Induction (`machine.h` induction section): dq synchronous-frame flux
   model (RK4) + exact steady-torque equivalent circuit as reference.
   Rotating machines use dq ODEs (position-varying mutuals have no MNA

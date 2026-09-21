@@ -68,6 +68,7 @@ set(POWER_ENGINE_SOURCES
   src/multitone/multitone.cpp
   src/statespace/statespace.cpp
   src/machine/machine.cpp
+  src/sweep/sweep.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})
