@@ -221,5 +221,6 @@ TEST(PmsmDrive, SpeedRegulationAndLoadStep) {
   EXPECT_LT(wMin, kWref - 2.0);
   EXPECT_NEAR(rotor.omega, kWref, 0.03 * kWref);
   EXPECT_NEAR(idMean / nMean, 0.0, 0.1);
+  EXPECT_NEAR(iqMean / nMean, iMean / nMean, 0.10 * iMean / nMean);
   EXPECT_NEAR(iMean / nMean, (kB * kWref + kTload) / kTq, 0.15 * (kB * kWref + kTload) / kTq);
 }
