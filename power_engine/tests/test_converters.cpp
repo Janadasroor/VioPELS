@@ -7,6 +7,8 @@
 #include "power_engine/ac.h"
 #include "power_engine/control.h"
 #include "power_engine/engine.h"
+#include "power_engine/measurements.h"
+#include "power_engine/vienna_pfc.h"
 
 using power_engine::Engine;
 
@@ -375,6 +377,110 @@ TEST(Converters, ViennaUncontrolledMatchesDiodeBridge) {
   // drops + grid-R + ripple pull the loaded mean a few percent under.
   EXPECT_NEAR(sum / n, 540.0, 0.04 * 540.0);
   EXPECT_GT(eng.solverStats().diodeEvents, 0);
+}
+
+// Vienna PFC fixture runner: diode pre-charge (sources ramp 10ms), loops
+// close at 20ms, Vdc* ramps to 750V by 80ms, metrics over [260, 320]ms.
+// Ctl must expose update(t, vsrc, i, vdc[, vmid]) -> array<bool,3> gates.
+template <typename Ctl>
+struct ViennaPfcMetrics {
+  double meanVdc = 0.0, meanVmid = 0.0, pf = 0.0, thdA = 0.0;
+};
+template <typename Ctl, typename Update>
+ViennaPfcMetrics<Ctl> runViennaPfc(Ctl& ctl, Update&& apply) {
+  constexpr double kVph = 230.0, kF0 = 50.0, kDt = 1e-6, kStop = 320e-3;
+  const double w = 2.0 * kPi * kF0;
+  const double vpk = kVph * std::sqrt(2.0);
+  Engine eng;
+  eng.setTimeStep(kDt);
+  eng.setStopTime(kStop);
+  power_engine::vienna::buildPlant(eng, power_engine::vienna::PlantParams{});
+  eng.start();
+  double sVdc = 0.0, sVmid = 0.0, sP = 0.0, sI2 = 0.0, n = 0.0;
+  power_engine::measurements::Trace trA;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    const double t = eng.time();
+    const double e = t >= 10e-3 ? 1.0 : 0.5 * (1.0 - std::cos(kPi * t / 10e-3));
+    const std::array<double, 3> vs = {
+        e * vpk * std::sin(w * t),
+        e * vpk * std::sin(w * t - 2.0 * kPi / 3.0),
+        e * vpk * std::sin(w * t + 2.0 * kPi / 3.0),
+    };
+    eng.circuit().findDevice("VA").value = vs[0];
+    eng.circuit().findDevice("VB").value = vs[1];
+    eng.circuit().findDevice("VC").value = vs[2];
+    const std::array<double, 3> im = {
+        eng.deviceCurrent("LA"),
+        eng.deviceCurrent("LB"),
+        eng.deviceCurrent("LC"),
+    };
+    apply(eng, ctl, t, vs, im);
+    eng.step();
+    if (t > 260e-3) {
+      const double vdc = eng.currentSolution().probes.at("v:7");
+      const double vmid = eng.currentSolution().probes.at("v:9");
+      const double ia = eng.deviceCurrent("LA");
+      const double ib = eng.deviceCurrent("LB");
+      const double ic = eng.deviceCurrent("LC");
+      sVdc += vdc;
+      sVmid += vmid;
+      sP += vs[0] * ia + vs[1] * ib + vs[2] * ic;
+      sI2 += (ia * ia + ib * ib + ic * ic) / 3.0;
+      n += 1.0;
+      trA.t.push_back(t);
+      trA.y.push_back(ia);
+    }
+  }
+  ViennaPfcMetrics<Ctl> m;
+  m.meanVdc = sVdc / n;
+  m.meanVmid = sVmid / n;
+  m.pf = (sP / n) / (3.0 * kVph * std::sqrt(sI2 / n));
+  m.thdA = power_engine::measurements::thd(trA, kF0, 500);
+  return m;
+}
+
+// Carrier average-current-mode PFC: regulates Vdc (750V) at unity PF, but
+// the midpoint collapses to ground under the 500ohm bleed — duty-side
+// balancing is structurally futile here (common-mode shifts are KCL-null
+// in 3-wire; differential trims are eaten by the current-loop
+// integrators). Regulation WITHOUT balance, proving the two decouple.
+TEST(Converters, ViennaCarrierPfcRegulatesButMidpointCollapses) {
+  power_engine::vienna::Controller ctl;
+  const auto m = runViennaPfc(ctl, [](Engine& eng, auto& c, double t,
+                                      const std::array<double, 3>& vs,
+                                      const std::array<double, 3>& im) {
+    const double vdc = eng.currentSolution().probes.at("v:7");
+    const auto gates = c.update(t, vs, im, vdc);
+    eng.setSwitch("SA", gates[0]);
+    eng.setSwitch("SB", gates[1]);
+    eng.setSwitch("SC", gates[2]);
+  });
+  EXPECT_NEAR(m.meanVdc, 750.0, 0.03 * 750.0);
+  EXPECT_GT(m.pf, 0.95);
+  // Collapsed: nowhere near Vdc/2 (~375V); sits at dc- instead.
+  EXPECT_LT(m.meanVmid, 100.0);
+}
+
+// Hysteretic PFC with threshold-shift balancing: same plant (asymmetric
+// caps + 0.75A midpoint bleed), full regulation — Vdc, midpoint at
+// Vdc/2, unity PF, bounded THD. No tracking integrator in the current
+// path, so the deliberate duty asymmetry survives.
+TEST(Converters, ViennaHysteresisBalancesMidpoint) {
+  power_engine::vienna::HysteresisController ctl;
+  const auto m = runViennaPfc(ctl, [](Engine& eng, auto& c, double t,
+                                      const std::array<double, 3>& vs,
+                                      const std::array<double, 3>& im) {
+    const double vdc = eng.currentSolution().probes.at("v:7");
+    const double vmid = eng.currentSolution().probes.at("v:9");
+    const auto gates = c.update(t, vs, im, vdc, vmid);
+    eng.setSwitch("SA", gates[0]);
+    eng.setSwitch("SB", gates[1]);
+    eng.setSwitch("SC", gates[2]);
+  });
+  EXPECT_NEAR(m.meanVdc, 750.0, 0.03 * 750.0);
+  EXPECT_NEAR(m.meanVmid, m.meanVdc / 2.0, 0.02 * 750.0);
+  EXPECT_GT(m.pf, 0.97);
+  EXPECT_LT(m.thdA, 0.15);
 }
 
 // Dual-active-bridge: 48V/48V, n=1, Lk=100uH, fsw=20kHz. Phase shift

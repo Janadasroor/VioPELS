@@ -230,11 +230,19 @@
     diodes a zero-impedance ground return that shorts phases (~400A latch,
     bridge reads ~400V instead of 540V). Diode bridges bootstrap from EMPTY
     caps (pre-charge above commutation level blocks uppers and latches
-    lowers). Vienna hysteretic PFC is deferred: the midpoint collapses to
-    ground (2-level boost equilibrium) under hysteresis — measured mean
-    switch currents ~-2.8A each drain node 9; common-mode ref offsets have
-    no authority (KCL-forbidden in 3-wire); needs carrier-PWM or explicit
-    neutral balancing (next item).
+    lowers). Vienna PFC is CLOSED-LOOP regulated (750Vdc, PF 0.99,
+    vienna_pfc.h + vienna_pfc_demo): carrier average-current-mode holds Vdc
+    and PF but the midpoint sits at dc- (measured Vmid ~0V) — duty-side
+    balancing is STRUCTURALLY futile in 3-wire (common-mode duty shifts are
+    KCL-null, T*d0*SUM(i)=0; differential trims are disturbance-rejected by
+    the current-loop integrators; reference shaping is confined to SUM=0).
+    Regulation and balance DECOUPLE (PF 0.97 WITH collapse). Balance needs
+    an architecture with no tracking integrator in the current path:
+    hysteretic control with sign-independent threshold shift
+    s = alpha*(Vc1-Vc2) holds Vmid = Vdc/2 within 0.3V against a 0.75A
+    midpoint bleed + asymmetric caps (both current polarities cooperate:
+    thresholds-up lengthens midpoint clamping for i>0 and shrinks the ON
+    region for i<0).
   - Coupled inductors: trapezoidal 2-port Norton from L*i flux linkage,
     k<1 enforced (k=1 singular → use Transformer); netlist `W` device.
   - Adaptive stepping (opt-in): step-doubling on node voltages, order-2
