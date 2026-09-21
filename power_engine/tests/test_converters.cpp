@@ -376,3 +376,149 @@ TEST(Converters, ViennaUncontrolledMatchesDiodeBridge) {
   EXPECT_NEAR(sum / n, 540.0, 0.04 * 540.0);
   EXPECT_GT(eng.solverStats().diodeEvents, 0);
 }
+
+// Dual-active-bridge: 48V/48V, n=1, Lk=100uH, fsw=20kHz. Phase shift
+// phi=30deg both directions. The R-loaded bus floats to the coupled
+// operating point Vout = V1*K*R, Pout = Vout^2/R with
+// K = phi*(pi-phi)/(2*pi^2*f*Lk) (NOT the stiff-bus V1*V2 formula).
+TEST(Converters, DabPhaseShiftPowerBothDirections) {
+  constexpr double kV = 48.0, kFsw = 20e3, kT = 50e-6, kLk = 100e-6;
+  for (double phiDeg : {30.0, -30.0}) {
+    const double phi = phiDeg * kPi / 180.0;
+    const double shift = phi * kT / (2.0 * kPi);
+    const double kk = std::abs(phi) * (kPi - std::abs(phi)) / (2.0 * kPi * kPi * kFsw * kLk);
+    const double vOut = kV * kk * 30.0;
+    const double pRef = vOut * vOut / 30.0;
+    Engine eng;
+    eng.setTimeStep(0.25e-6);
+    if (phi > 0.0) {
+      // Forward: stiff V1 source, R2 load on bridge-B bus.
+      eng.circuit().addVoltageSource("V1", 1, 0, kV);
+      eng.circuit().addCapacitor("C1", 1, 0, 200e-6, kV);
+      eng.circuit().addCapacitor("C2", 4, 0, 200e-6, kV);
+      eng.circuit().addResistor("R2", 4, 0, 30.0);
+    } else {
+      // Reverse: stiff V2 source, R1 load on bridge-A bus.
+      eng.circuit().addVoltageSource("V2", 4, 0, kV);
+      eng.circuit().addCapacitor("C1", 1, 0, 200e-6, kV);
+      eng.circuit().addCapacitor("C2", 4, 0, 200e-6, kV);
+      eng.circuit().addResistor("R1", 1, 0, 30.0);
+    }
+    // Bridge A across (2,3), bridge B across (5,6); Lk + 1:1 transformer.
+    // Bridge B square pattern (ON on [shift,shift+T/2) mod T) for init.
+    auto bOnAt = [&](double t) {
+      double ph = std::fmod(t - shift, kT);
+      if (ph < 0.0) ph += kT;
+      return ph < 0.5 * kT;
+    };
+    const bool bInit = bOnAt(0.0);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addSwitch("S2", 2, 0, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("S3", 1, 3, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("S4", 3, 0, 5e-3, 1e6, true);
+    eng.circuit().addInductor("Lk", 2, 7, kLk, 0.0);
+    eng.circuit().addTransformer("T1", 7, 3, 5, 6, 1.0);
+    eng.circuit().addSwitch("S5", 4, 5, 5e-3, 1e6, bInit);
+    eng.circuit().addSwitch("S6", 5, 0, 5e-3, 1e6, !bInit);
+    eng.circuit().addSwitch("S7", 4, 6, 5e-3, 1e6, !bInit);
+    eng.circuit().addSwitch("S8", 6, 0, 5e-3, 1e6, bInit);
+    // Bridge A: diagonals on [0,T/2),[T/2,T). Bridge B shifted by phi.
+    constexpr double kStop = 15e-3;
+    for (double tk = 0.0; tk < kStop; tk += kT) {
+      eng.scheduleSwitch("S1", true, tk);
+      eng.scheduleSwitch("S1", false, tk + 0.5 * kT);
+      eng.scheduleSwitch("S4", true, tk);
+      eng.scheduleSwitch("S4", false, tk + 0.5 * kT);
+      eng.scheduleSwitch("S2", false, tk);
+      eng.scheduleSwitch("S2", true, tk + 0.5 * kT);
+      eng.scheduleSwitch("S3", false, tk);
+      eng.scheduleSwitch("S3", true, tk + 0.5 * kT);
+      // Bridge-B edges wrapped into [0, +inf) (periodicity is exact).
+      double bOn = tk + shift, bOff = tk + shift + 0.5 * kT;
+      if (bOn < 0.0) {
+        bOn += kT;
+        bOff += kT;
+      }
+      eng.scheduleSwitch("S5", true, bOn);
+      eng.scheduleSwitch("S5", false, bOff);
+      eng.scheduleSwitch("S8", true, bOn);
+      eng.scheduleSwitch("S8", false, bOff);
+      eng.scheduleSwitch("S6", false, bOn);
+      eng.scheduleSwitch("S6", true, bOff);
+      eng.scheduleSwitch("S7", false, bOn);
+      eng.scheduleSwitch("S7", true, bOff);
+    }
+    eng.setStopTime(kStop);
+    eng.start();
+    const int outNode = phi > 0.0 ? 4 : 1;
+    double sum = 0.0, n = 0.0;
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      eng.step();
+      if (eng.time() > kStop - 3e-3) {
+        const double v = eng.currentSolution().probes.at("v:" + std::to_string(outNode));
+        sum += v * v;
+        n += 1.0;
+      }
+    }
+    EXPECT_NEAR((sum / n) / 30.0, pRef, 0.05 * pRef) << "phi=" << phiDeg;
+  }
+}
+
+// LLC resonant converter: full-bridge 48V, Lr=20uH + Cr=500nF (fr=50kHz),
+// coupled-inductor transformer (Lm=100uH, k=0.98, n=1), diode bridge +
+// 200uF + 10ohm. FHA gain M(fn) at fn=1 and fn=0.8 within 10%.
+TEST(Converters, LlcFhaGainMatchesTheory) {
+  constexpr double kVin = 48.0, kLr = 20e-6, kCr = 500e-9, kLm = 100e-6;
+  constexpr double kR = 10.0;
+  const double kFr = 1.0 / (2.0 * kPi * std::sqrt(kLr * kCr));  // ~50.3kHz
+  const double kLam = kLr / kLm;
+  const double kRac = 8.0 * kR / (kPi * kPi);
+  const double kQ = std::sqrt(kLr / kCr) / kRac;
+  auto fha = [&](double fn) {
+    const double a = 1.0 + kLam - kLam / (fn * fn);
+    const double b = kQ * (fn - 1.0 / fn);
+    return 1.0 / std::sqrt(a * a + b * b);
+  };
+  for (double fn : {1.0, 0.8}) {
+    const double fsw = fn * kFr;
+    const double T = 1.0 / fsw;
+    Engine eng;
+    eng.setTimeStep(0.2e-6);
+    eng.circuit().addVoltageSource("Vin", 1, 0, kVin);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addSwitch("S2", 2, 0, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("S3", 1, 3, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("S4", 3, 0, 5e-3, 1e6, true);
+    eng.circuit().addInductor("Lr", 2, 4, kLr, 0.0);
+    eng.circuit().addCapacitor("Cr", 4, 5, kCr, 0.0);
+    eng.circuit().addCoupledInductors("T1", 5, 3, 6, 7, kLm, kLm, 0.98);
+    eng.circuit().addDiode("D1", 6, 8, 0.0, 10e-3, 1e6);
+    eng.circuit().addDiode("D2", 7, 8, 0.0, 10e-3, 1e6);
+    eng.circuit().addDiode("D3", 0, 6, 0.0, 10e-3, 1e6);
+    eng.circuit().addDiode("D4", 0, 7, 0.0, 10e-3, 1e6);
+    eng.circuit().addCapacitor("Cout", 8, 0, 200e-6, 0.0);
+    eng.circuit().addResistor("Rload", 8, 0, kR);
+    constexpr double kStop = 12e-3;
+    for (double tk = 0.0; tk < kStop; tk += T) {
+      eng.scheduleSwitch("S1", true, tk);
+      eng.scheduleSwitch("S1", false, tk + 0.5 * T);
+      eng.scheduleSwitch("S4", true, tk);
+      eng.scheduleSwitch("S4", false, tk + 0.5 * T);
+      eng.scheduleSwitch("S2", false, tk);
+      eng.scheduleSwitch("S2", true, tk + 0.5 * T);
+      eng.scheduleSwitch("S3", false, tk);
+      eng.scheduleSwitch("S3", true, tk + 0.5 * T);
+    }
+    eng.setStopTime(kStop);
+    eng.start();
+    double sum = 0.0, n = 0.0;
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      eng.step();
+      if (eng.time() > kStop - 3e-3) {
+        sum += eng.currentSolution().probes.at("v:8");
+        n += 1.0;
+      }
+    }
+    EXPECT_NEAR(sum / n, kVin * fha(fn), 0.10 * kVin * fha(fn)) << "fn=" << fn;
+  }
+}

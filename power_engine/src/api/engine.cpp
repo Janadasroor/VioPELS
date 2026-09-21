@@ -32,9 +32,18 @@ void Engine::scheduleSwitch(const std::string& name, bool closed, double at) {
   // Validate switch exists now (topology is fixed before start()).
   circuit_.setSwitch(name, circuit_.switchClosed(name));  // throws if not a switch
   if (!std::isfinite(at) || at < 0.0) throw std::runtime_error("event time must be finite >= 0");
-  events_.push_back({at, name, closed, false});
-  std::sort(events_.begin(), events_.end(),
-            [](const SwitchEvent& a, const SwitchEvent& b) { return a.at < b.at; });
+  // Sorted insert (stable for equal times): callers usually append in time
+  // order (per-period scheduling), which stays O(1) amortized; a full sort
+  // per call would be O(N^2 log N) total and dominate long PWM runs.
+  const SwitchEvent ev{at, name, closed, false};
+  if (events_.empty() || !(ev.at < events_.back().at)) {
+    events_.push_back(ev);
+  } else {
+    const auto it = std::upper_bound(
+        events_.begin(), events_.end(), ev.at,
+        [](double t, const SwitchEvent& e) { return t < e.at; });
+    events_.insert(it, ev);
+  }
 }
 
 void Engine::clearScheduledEvents() { events_.clear(); }
@@ -218,16 +227,35 @@ void Engine::step() {
       }
       if (tNext > tTarget) tNext = tTarget;
       preStepLossHooks();
+      // Sliver guard: arbitrary duty edges land at arbitrary sub-step
+      // alignments, and picosecond slivers make capacitor companions
+      // (2C/dtSub) explode, tripping the solver's relative singularity
+      // guard (false positive on a valid matrix). Two cases:
+      // (a) event imminent within the sliver: fire it now (<=1ns early,
+      //     negligible) and continue; terminates (consumes the event).
+      // (b) no event, residual to tTarget within the sliver (a previous
+      //     split landed just before the boundary/stop): extend past it
+      //     (<=1ns overshoot) and solve normally with safe companions.
+      //     The tNext < tTarget condition is load-bearing: skipping the
+      //     solve with no event to consume spins forever.
+      const double kMinSub = std::max(kTimeEps, 1e-3 * baseDt);
+      if (tNext < tTarget && tNext - tNow <= kMinSub) {
+        applyDueEvents(tNext);
+        continue;
+      }
+      if (tNext >= tTarget && tTarget - tNow <= kMinSub) {
+        tTarget += kMinSub;
+        tNext = tTarget;
+      }
       if (solver_.adaptive()) {
         const double tBefore = solver_.time();
         solver_.stepTo(tNext);  // error-controlled, lands exactly
         if (solver_.time() > tBefore) updateLosses(solver_.time() - tBefore);
       } else {
-        double dtSub = tNext - tNow;
-        if (dtSub <= kTimeEps) {
-          applyDueEvents(tNext);  // event essentially now; apply, no zero-step
-          continue;
-        }
+        // Note: no zero-step skip here on purpose (an old one could spin
+        // forever when the residual has no event in it); dust-scale
+        // residuals solve normally below.
+        const double dtSub = tNext - tNow;
         solver_.setStep(dtSub);
         solver_.step();  // includes diode event iteration
         updateLosses(dtSub);

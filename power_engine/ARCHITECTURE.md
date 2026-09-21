@@ -89,8 +89,16 @@
   over attached networks; never combine both). Validated: efficiency
   droop vs ambient (25/85/125C) within 5% of the coupled closed form;
   brute-force transient agrees with the outer loop.
-- Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
-  thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
+  - Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
+    thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
+  - Event sub-stepping hardening: arbitrary-duty PWM edges land at arbitrary
+    sub-step alignments; picosecond slivers used to explode capacitor
+    companions and false-trip the singularity guard, and the first guard
+    version could spin forever with no event pending. Rule now: imminent
+    event fires (<=1ns early) else the residual steps normally (companions
+    safe at ns scale); near-boundary residuals extend past it. Event
+    scheduling is append-ordered O(1) (binary insert fallback), stable for
+    equal times.
 - Performance (Phase 6, measured on 6ms/12k-step open-loop buck, gcc):
   Release ≈ 0.035s (~3µs/step); unoptimized ≈ 0.65s (~54µs/step) — hence
   Release-by-default in the root CMake. Solver hot loop uses PartialPivLU
@@ -169,6 +177,10 @@
     differential fundamental = m*Vdc), 3-phase 2-level SVPWM inverter with
     3-wire star RL (current = Vph/|Z|, power closes), Vienna diode bridge
     (Vdc = 1.35*Vll minus overlap/drops).
+  - Resonant/duals (tests + CSV demos): dual-active-bridge SPS ±30deg
+    (power both directions at the coupled Vout=V1*K*R operating point, not
+    the stiff-bus formula), LLC series-resonant (FHA gain at/below
+    resonance vs coupled-inductor transformer model).
   - LESSONS (3-phase mains, each verified the hard way): the mains neutral
     MUST float (true 3-wire) — grounded neutrals + grounded dc- give lower
     diodes a zero-impedance ground return that shorts phases (~400A latch,
