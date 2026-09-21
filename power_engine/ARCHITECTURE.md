@@ -50,6 +50,16 @@
   bilinear substitution with polynomial arithmetic, order ≤ 8, proper
   only). `Engine::applyPwmSpecs()` expands `.control pwm` to exact edges
   (explicit; needs stop time).
+  - Breadth (one test per block): `HysteresisController` (latching
+    bang-bang, ON when low — the complement of Comparator), `StateMachine`
+    (dwell-gated transitions for sequencers/protection), `HalfBridgeDriver`
+    (complementary pair with deadtime + schedulable exact edges; short
+    on-intervals blank that side), `Svpwm` (sector/dwell math + symmetric
+    7-segment states; 3-phase sim validates 27V fundamentals at 0/-120/
+    +120deg), discrete filters (`lowPass`/`highPass` Tustin 1st-order,
+    `movingAverage` FIR). Lessons: sim dt must resolve the shortest
+    switching segment (midpoint sampling misses interior edges otherwise);
+    SVPWM meter references follow the inverter cosine convention.
 - `src/thermal/thermal.cpp` + engine coupling: conduction loss = ∫v·i per
   accepted sub-step (exact in the ideal model); switching loss = Eon/Eoff
   on detected gate edges (scheduled or manual). Foster stepped with the
