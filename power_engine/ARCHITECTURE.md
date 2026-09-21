@@ -165,6 +165,20 @@
     T = -Gcl/(1+Gcl) ill-conditioned: validate Gcl per-point, T via margins.
   - Converters: boost, synchronous buck (deadtime + body diodes clamp Vsw),
     flyback (dot-convention secondary), DCM buck — all vs closed-form theory.
+  - Mains topologies (tests + CSV demos): full-bridge SPWM (unipolar,
+    differential fundamental = m*Vdc), 3-phase 2-level SVPWM inverter with
+    3-wire star RL (current = Vph/|Z|, power closes), Vienna diode bridge
+    (Vdc = 1.35*Vll minus overlap/drops).
+  - LESSONS (3-phase mains, each verified the hard way): the mains neutral
+    MUST float (true 3-wire) — grounded neutrals + grounded dc- give lower
+    diodes a zero-impedance ground return that shorts phases (~400A latch,
+    bridge reads ~400V instead of 540V). Diode bridges bootstrap from EMPTY
+    caps (pre-charge above commutation level blocks uppers and latches
+    lowers). Vienna hysteretic PFC is deferred: the midpoint collapses to
+    ground (2-level boost equilibrium) under hysteresis — measured mean
+    switch currents ~-2.8A each drain node 9; common-mode ref offsets have
+    no authority (KCL-forbidden in 3-wire); needs carrier-PWM or explicit
+    neutral balancing (next item).
   - Coupled inductors: trapezoidal 2-port Norton from L*i flux linkage,
     k<1 enforced (k=1 singular → use Transformer); netlist `W` device.
   - Adaptive stepping (opt-in): step-doubling on node voltages, order-2
