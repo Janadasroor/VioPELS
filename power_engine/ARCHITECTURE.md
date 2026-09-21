@@ -100,6 +100,13 @@
   hot ki rings — feedforward fixes ramp lag honestly); sim dt must
   resolve hysteresis crossings with margin (overshoot = slope*dt << band).
   Motor-drive demo prints speed/iq/torque CSV.
+- Induction (`machine.h` induction section): dq synchronous-frame flux
+  model (RK4) + exact steady-torque equivalent circuit as reference.
+  Rotating machines use dq ODEs (position-varying mutuals have no MNA
+  companion); switching drives couple through ideal pole voltages +
+  Park (no MNA needed for stiff-DC inverters). V/f needs no feedback;
+  loads must stay below locked-rotor torque to self-start; analytic slip
+  inverts Te(s) = Tload + B*w (friction matters at light load).
   - Numerical notes: SI/double/seconds; ground `0`; companions from `ic`;
     thermal states reset at `start()`; loss accumulators rebuilt at `start()`.
   - Event sub-stepping hardening: arbitrary-duty PWM edges land at arbitrary
