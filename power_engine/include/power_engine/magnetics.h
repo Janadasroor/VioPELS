@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,72 @@ class HysteresisCore {
 /// independent) for the two-term separation; derive an equivalent parallel
 /// resistance as R = Vrms^2/(P*Vol) at the operating point.
 double eddyLossDensity(double rho, double thickness, double freqHz, double bPeak);
+
+// ---------------------------------------------------------------------------
+// Reluctance-network magnetic domain + winding (circuit) interface.
+// ---------------------------------------------------------------------------
+
+/// Magnetic domain nodal network: scalar potentials U [A·t] on nodes,
+/// fluxes Phi [Wb] through branches, MMF drops F = R*Phi.
+/// Linear reluctances solve exactly (nodal); saturable branches
+/// (tanh B-H) iterate by Newton with a numeric Jacobian.
+/// Winding interface (explicit co-simulation, same philosophy as the
+/// thermal/mechanical coupling: electrical dt steps with magnetic state
+/// refreshed per step): setWindingCurrent(i) from the circuit, solve(),
+/// then windingFlux() gives lambda/N for the back-EMF (finite-difference
+/// dλ/dt) or equivalentInductance() for linear networks (exact, L=N^2/R).
+/// Node 0 is the magnetic reference (ground).
+class ReluctanceNetwork {
+ public:
+  ReluctanceNetwork() = default;
+
+  /// Linear reluctance branch [A·t/Wb] between nodes.
+  void addReluctance(const std::string& name, int n1, int n2, double r);
+  /// Saturable branch from geometry + tanh B-H: length l [m], area A [m^2],
+  /// saturation Bs [T], shape field a [A/m]. R(Phi) = l*H/(A*B) with
+  /// H = a*atanh(B/Bs), B = Phi/A.
+  void addSaturableReluctance(const std::string& name, int n1, int n2, double l,
+                              double area, double bs, double a);
+  /// N-turn winding linking a branch's flux (by reluctance name).
+  void addWinding(const std::string& name, const std::string& branch, double turns);
+  /// Winding (circuit) current [A]; sets the MMF N*i on its branch.
+  void setWindingCurrent(const std::string& name, double current);
+  /// Solve for node potentials + branch fluxes (throws on singularity or
+  /// Newton non-convergence).
+  void solve();
+  /// Branch flux [Wb] after solve (throws if branch unknown/stale).
+  double branchFlux(const std::string& branch) const;
+  /// Winding flux [Wb] = N * branch flux (flux linkage per... note: this
+  /// is Phi (not lambda); lambda = turns * windingFlux()).
+  double windingFlux(const std::string& name) const;
+  /// Equivalent inductance [H] seen at a winding (linear networks):
+  /// energize with 1A (all else zero), lambda = N*Phi. Throws if any
+  /// branch is saturable (use co-simulation there instead).
+  double equivalentInductance(const std::string& name);
+
+ private:
+  struct Branch {
+    std::string name;
+    int n1 = 0, n2 = 0;
+    bool saturable = false;
+    double r = 0.0;  // linear reluctance (valid if !saturable)
+    double l = 0.0, area = 0.0, bs = 0.0, a = 0.0;
+    double flux = 0.0;  // last solve
+  };
+  struct Winding {
+    std::string name;
+    std::string branch;
+    double turns = 0.0;
+    double current = 0.0;
+  };
+  int nodeIndex(int node) const;
+  std::map<std::string, std::size_t> branchByName_;
+  std::map<std::string, Winding> windings_;
+  std::vector<Branch> branches_;
+  std::map<int, int> nodeIndex_;
+  std::vector<double> potentials_;
+  bool solved_ = false;
+};
 
 }  // namespace magnetics
 }  // namespace power_engine

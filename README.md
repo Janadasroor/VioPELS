@@ -18,7 +18,7 @@ Headless C++20 system-level power-electronics engine.
 - Electro-thermal: conduction (exact v·i) + switching (Eon/Eoff, Qrr·Vr)
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated converters: buck (CCM/DCM, open/closed-loop, sync), boost,
-  flyback; 113 tests, 22 binaries, zero warnings
+  flyback; 123 tests, 22 binaries, zero warnings
 - AC analysis: Fourier-meter Bode (RC + buck Gvd), `ac_demo` CSV
 - Steady-state shooting: periodic orbits without startup transient
 

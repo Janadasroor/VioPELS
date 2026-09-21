@@ -110,6 +110,14 @@
   mirrored (clockwise, negative-area) loop — pin coercivity sides AND area
   sign, not just magnitudes. Classical eddy density alongside; reluctance
   network + winding interfaces are part 2.
+- Reluctance network (`magnetics.h` ReluctanceNetwork): nodal magnetic
+  domain (ground = reference, MMF Nortonizes without extra unknowns),
+  saturable tanh branches via fixed-point iteration. Winding interface =
+  Norton companion (R = 2*Lt/dt + history source, mirroring solver stamps;
+  exact for linear, tangent per step when saturating). Lesson: series
+  voltage-source back-EMF with 1-step lag is violently unstable for stiff
+  inductive coupling (gain L/(R*dt)) — never use it. Buck via network
+  matches plain-L buck.
 - Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs
   (loadNetlist + setParameter re-elaboration per point), setup callback
   for wiring (PWM/thermal/loss specs, SolutionCallback windowed stats)

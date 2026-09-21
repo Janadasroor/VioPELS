@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -271,4 +272,156 @@ TEST(EddyLoss, MatchesFormula) {
                std::runtime_error);
   EXPECT_THROW(power_engine::magnetics::eddyLossDensity(50e-8, -1e-3, 50.0, 1.0),
                std::runtime_error);
+}
+
+// --- Reluctance network + winding interface ---
+
+// Gapped/ungapped toroid: L = N^2/R_total (linear solve exactness).
+// Core: l=0.2m, A=1e-4m^2, mur=1000 -> Rc=1.59e6; gap 1mm -> Rg=7.96e6.
+TEST(ReluctanceNetwork, GappedToroidInductance) {
+  auto toroid = [](double gapLen) {
+    power_engine::magnetics::ReluctanceNetwork net;
+    const double mu0 = 4.0 * 3.141592653589793e-7;
+    const double rc = 0.2 / (1000.0 * mu0 * 1e-4);
+    net.addReluctance("coreA", 0, 2, rc / 2.0);
+    net.addReluctance("coreB", 2, 3, rc / 2.0);
+    net.addReluctance("gap", 3, 0, gapLen / (mu0 * 1e-4));
+    net.addWinding("W1", "coreA", 100.0);
+    return net;
+  };
+  {
+    auto net = toroid(1e-3);
+    const double mu0 = 4.0 * 3.141592653589793e-7;
+    const double ref = 100.0 * 100.0 / (0.2 / (1000.0 * mu0 * 1e-4) + 1e-3 / (mu0 * 1e-4));
+    EXPECT_NEAR(net.equivalentInductance("W1"), ref, 1e-3 * ref);
+  }
+  {  // Ungapped (iron path only): gap reluctance negligible, L ~6.3mH.
+    auto net = toroid(1e-9);
+    const double mu0 = 4.0 * 3.141592653589793e-7;
+    const double ref = 100.0 * 100.0 / (0.2 / (1000.0 * mu0 * 1e-4));
+    EXPECT_NEAR(net.equivalentInductance("W1"), ref, 0.02 * ref);
+  }
+  EXPECT_THROW(toroid(0.0), std::runtime_error);  // gap R must be > 0
+}
+
+// Saturable toroid: low-current slope matches linear R0; high current
+// flattens hard (flux ~ N*Bs*A ceiling).
+TEST(ReluctanceNetwork, SaturableKnee) {
+  power_engine::magnetics::ReluctanceNetwork net;
+  net.addSaturableReluctance("coreA", 0, 2, 0.1, 1e-4, 1.5, 100.0);
+  net.addSaturableReluctance("coreB", 2, 3, 0.1, 1e-4, 1.5, 100.0);
+  net.addSaturableReluctance("coreC", 3, 0, 0.1, 1e-4, 1.5, 100.0);
+  net.addWinding("W1", "coreA", 100.0);
+  auto lambdaAt = [&](double i) {
+    net.setWindingCurrent("W1", i);
+    net.solve();
+    return 100.0 * net.windingFlux("W1");
+  };
+  const double l0 = lambdaAt(0.02) / 0.02;
+  // Low-B reluctance R0 = l*a/(A*Bs) per branch: L0 = N^2/(3*R0).
+  const double r0 = 0.1 * 100.0 / (1e-4 * 1.5);
+  EXPECT_NEAR(l0, 100.0 * 100.0 / (3.0 * r0), 0.02 * 100.0 * 100.0 / (3.0 * r0));
+  const double lHigh = lambdaAt(5.0) / 5.0;
+  EXPECT_LT(lHigh, 0.5 * l0);  // deep saturation: apparent L collapses
+  EXPECT_THROW(net.equivalentInductance("W1"), std::runtime_error);
+}
+
+// Buck with the inductor interfaced through a (linear) reluctance network.
+// Interface discipline (mirrors the solver's own trapezoidal companion,
+// hence stable; a series voltage-source EMF with 1-step lag is violently
+// unstable for stiff L/R/dt and must NOT be used): the winding presents a
+// Norton companion (R = 2*Lt/dt in parallel with I_hist source), with
+// Lt from the network (exact constant here) and I_hist = i + G*v from the
+// previous solution. For linear networks this is bit-identical math to a
+// plain inductor (plumbing validation); saturating networks would refresh
+// Lt = dλ/di per step (documented extension).
+// Must reproduce the plain-L buck (same 200uH) within 1%.
+TEST(ReluctanceNetwork, BuckViaWindingMatchesPlainL) {
+  constexpr double kDt = 0.5e-6, kStop = 6e-3, kT = 50e-6;
+  constexpr double kLt = 200e-6;
+  constexpr double kG = kDt / (2.0 * kLt);
+  auto runBuck = [&](bool viaNetwork, double& vMean, double& ripple) {
+    Engine eng;
+    eng.setTimeStep(kDt);
+    eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+    power_engine::magnetics::ReluctanceNetwork mag;
+    if (viaNetwork) {
+      // Triangle loop, R_total = 12.5e6 -> L = 50^2/R = 200uH exact.
+      mag.addReluctance("coreA", 0, 2, 4.25e6);
+      mag.addReluctance("coreB", 2, 3, 4.25e6);
+      mag.addReluctance("gap", 3, 0, 4.0e6);
+      mag.addWinding("W1", "coreA", 50.0);
+      EXPECT_NEAR(mag.equivalentInductance("W1"), kLt, 1e-3 * kLt);
+      eng.circuit().addResistor("Rnort", 2, 4, 1.0 / kG);
+      eng.circuit().addCurrentSource("Ihist", 2, 4, 0.0);
+    } else {
+      eng.circuit().addInductor("L1", 2, 4, kLt, 0.0);
+    }
+    eng.circuit().addCapacitor("C1", 4, 0, 200e-6, 0.0);
+    eng.circuit().addResistor("Rload", 4, 0, 5.0);
+    for (double tk = 0.0; tk < kStop; tk += kT) {
+      eng.scheduleSwitch("S1", true, tk);
+      eng.scheduleSwitch("S1", false, tk + 0.5 * kT);
+    }
+    eng.setStopTime(kStop);
+    eng.start();
+    double sum = 0.0, n = 0.0, mn = 1e18, mx = -1e18;
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      if (viaNetwork) {
+        // Winding current = Norton branch total (resistor + history source).
+        const auto& pr0 = eng.currentSolution().probes;
+        const double iW = eng.deviceCurrent("Rnort") + eng.circuit().findDevice("Ihist").value;
+        const double vW = pr0.at("v:2") - pr0.at("v:4");
+        mag.setWindingCurrent("W1", iW);
+        mag.solve();
+        (void)mag.windingFlux("W1");  // exercises the read path
+        eng.circuit().findDevice("Ihist").value = iW + kG * vW;
+      }
+      eng.step();
+      const double t = eng.time();
+      if (t > kStop - 1e-3) {
+        const double v = eng.currentSolution().probes.at("v:4");
+        sum += v;
+        n += 1.0;
+        mn = std::min(mn, v);
+        mx = std::max(mx, v);
+      }
+    }
+    vMean = sum / n;
+    ripple = mx - mn;
+  };
+  double vPlain = 0.0, rPlain = 0.0, vNet = 0.0, rNet = 0.0;
+  runBuck(false, vPlain, rPlain);
+  runBuck(true, vNet, rNet);
+  EXPECT_NEAR(vNet, vPlain, 0.01 * vPlain);
+  EXPECT_NEAR(rNet, rPlain, 0.10 * rPlain);
+}
+
+// Network validation errors: dupes, unknowns, bad params, stale access.
+TEST(ReluctanceNetwork, RejectsBadDefinitions) {
+  using power_engine::magnetics::ReluctanceNetwork;
+  ReluctanceNetwork net;
+  EXPECT_THROW(net.solve(), std::runtime_error);  // empty
+  EXPECT_THROW(net.addReluctance("", 1, 0, 1.0), std::runtime_error);
+  EXPECT_THROW(net.addReluctance("R", 1, 0, 0.0), std::runtime_error);
+  EXPECT_THROW(net.addReluctance("R", 1, 0, -1.0), std::runtime_error);
+  net.addReluctance("R", 1, 0, 1.0);
+  EXPECT_THROW(net.addReluctance("R", 1, 0, 1.0), std::runtime_error);  // dupe
+  EXPECT_THROW(net.addSaturableReluctance("S", 1, 0, 0.0, 1e-4, 1.5, 100.0),
+               std::runtime_error);
+  EXPECT_THROW(net.addWinding("", "R", 10.0), std::runtime_error);
+  EXPECT_THROW(net.addWinding("W", "NOPE", 10.0), std::runtime_error);
+  EXPECT_THROW(net.addWinding("W", "R", 0.0), std::runtime_error);
+  net.addWinding("W", "R", 10.0);
+  EXPECT_THROW(net.addWinding("W", "R", 10.0), std::runtime_error);  // dupe
+  EXPECT_THROW(net.setWindingCurrent("NOPE", 1.0), std::runtime_error);
+  EXPECT_THROW(net.branchFlux("R"), std::runtime_error);  // stale (never solved)
+  EXPECT_THROW(net.windingFlux("NOPE"), std::runtime_error);
+  net.setWindingCurrent("W", 1.0);
+  net.solve();
+  // Open magnetic branch (no return path) correctly carries zero flux.
+  EXPECT_DOUBLE_EQ(net.branchFlux("R"), 0.0);
+  EXPECT_THROW(net.branchFlux("NOPE"), std::runtime_error);
 }
