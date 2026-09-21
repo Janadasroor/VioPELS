@@ -487,7 +487,8 @@ Svpwm::Sequence Svpwm::sequence(double alpha, double beta) const {
   requireFinite(beta, "svpwm beta");
   const double T = period();
   const double pi = std::acos(-1.0);
-  constexpr double kMax = 2.0 / std::sqrt(3.0);  // linear-region |u| limit
+  // Linear-region |u| limit 2/sqrt(3) (hardcoded: constexpr sqrt is MSVC-hostile).
+  constexpr double kMax = 1.1547005383792515;
   double mag = std::hypot(alpha, beta);
   double a = alpha, b = beta;
   if (mag > kMax && mag > 0.0) {  // clamp overmodulation to the hexagon
