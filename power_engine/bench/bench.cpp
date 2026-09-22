@@ -15,7 +15,7 @@ namespace {
 
 struct Result {
   std::string name;
-  long steps = 0;
+  long long steps = 0;
   double wallMs = 0.0;
   double checksum = 0.0;
   long long resolves = 0;     // diode-iteration re-solves
@@ -24,7 +24,7 @@ struct Result {
 };
 
 void report(const Result& r) {
-  std::printf("%-18s steps=%-7ld wall=%8.1fms us/step=%7.3f checksum=%.12g\n",
+  std::printf("%-18s steps=%-7lld wall=%8.1fms us/step=%7.3f checksum=%.12g\n",
               r.name.c_str(), r.steps, r.wallMs,
               r.wallMs * 1000.0 / static_cast<double>(r.steps), r.checksum);
   std::printf("%-18s resolves=%lld events=%lld skips=%lld\n", "", r.resolves,
