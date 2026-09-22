@@ -35,6 +35,7 @@ struct SolverStats {
   long long sparseSolves = 0;  ///< linear solves via SparseLU (large systems)
   long long newtonIters = 0;   ///< Newton linearizations (saturable magnetics)
   long long factorSkips = 0;   ///< solves reusing a cached factorization
+  long long integratorSwitches = 0;  ///< auto-integrator mode changes
 };
 
 /// Opaque solver snapshot: clock, last solution vector, and full device
@@ -93,8 +94,34 @@ class TransientSolver {
   void setAdaptive(double tol, double dtMin, double dtMax);
   void clearAdaptive() { adaptive_ = AdaptiveConfig{}; }
   bool adaptive() const { return adaptive_.enabled; }
-  void setIntegrator(Integrator m) { integ_ = m; }
+  void setIntegrator(Integrator m) {
+    integ_ = m;
+    auto_ = AutoConfig{};  // explicit mode wins: auto off
+  }
   Integrator integrator() const { return integ_; }
+  /// PLECS-Auto-style stiffness switching: trapezoidal while smooth,
+  /// TR-BDF2 when stiffness is detected (diode-iteration pile-up, Newton
+  /// strain, or sustained Nyquist alternation of a node voltage), back to
+  /// trapezoidal after cleanBack quiet steps. Histories are shared, so
+  /// switching mid-run is exact. Off by default (deterministic default).
+  struct AutoConfig {
+    bool enabled = false;
+    int window = 64;        ///< diode-resolve counting window [steps]
+    int trigResolves = 6;   ///< resolves in window -> BDF2 (normal clusters
+                            ///< peak at 3, coarse-step stress at 13+)
+    int trigNewton = 8;     ///< Newton iters in one step -> BDF2
+    int flipNeed = 8;       ///< consecutive same-node delta sign flips -> BDF2
+    double flipRel = 0.05;  ///< flips count only above 5% of node level:
+                            ///< sustained numerical ringing is O(100%) of
+                            ///< signal (measured 280%), commutation bursts
+                            ///< O(0.001%) (measured 0.002%) — 5 decades apart
+    int cleanBack = 512;    ///< quiet steps before returning to trap
+  };
+  void setIntegratorAuto(bool on) {
+    auto_ = AutoConfig{};
+    auto_.enabled = on;
+  }
+  bool integratorAuto() const { return auto_.enabled; }
 
   /// Reset t=0 and device histories from Device::ic.
   void initialize();
@@ -145,6 +172,9 @@ class TransientSolver {
   void trBdf2Step(double dtNew);
   /// One converged solve at the current dt_/stage (Newton + diode loops).
   void convergeStep();
+  /// Auto-integrator bookkeeping at step end (no-op unless enabled).
+  /// Call with the per-step Newton iteration count and resolve count.
+  void autoUpdate(int newtonThisStep, int resolvesThisStep);
   struct Snapshot;
   Snapshot snapshot() const;
   void restore(const Snapshot& s);
@@ -170,6 +200,17 @@ class TransientSolver {
   double t_ = 0.0;
   AdaptiveConfig adaptive_;
   Integrator integ_ = Integrator::Trapezoidal;
+  AutoConfig auto_;
+  // Auto-integrator runtime state (reset by rebuildMaps()).
+  std::vector<int> resolveWindow_;  ///< ring buffer of per-step resolves
+  int resolveWinPos_ = 0;
+  int resolveWinSum_ = 0;
+  std::vector<double> prevDx_;  ///< previous step delta per unknown
+  std::vector<int> flipRun_;    ///< consecutive delta-sign flips per unknown
+  std::vector<double> runPeak_; ///< max |dx| in the current flip run
+  Eigen::VectorXd xPrevAuto_;   ///< previous committed solution (auto scan)
+  bool havePrevAuto_ = false;
+  int cleanSteps_ = 0;
   // True during TR-BDF2 stage 2: selects BDF2 companions in assemble() and
   // the BDF2 Newton formula, and salts the factorization signature (stage
   // 2 shares dt_ with trapezoidal steps but stamps a different matrix).

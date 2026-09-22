@@ -612,7 +612,7 @@ struct Elaborator {
     }
     if (dir == ".TRAN") {
       if (toks.size() != 3 && toks.size() != 4)
-        fail(line, ".tran needs: .tran dt tstop [TRAP|TRBDF2]");
+        fail(line, ".tran needs: .tran dt tstop [TRAP|TRBDF2|AUTO]");
       out.tran.given = true;
       out.tran.dt = value(toks[1], line);
       out.tran.tstop = value(toks[2], line);
@@ -622,8 +622,9 @@ struct Elaborator {
       out.tran.method.clear();
       if (toks.size() == 4) {
         const std::string m = upper(toks[3]);
-        if (m != "TRAP" && m != "TRBDF2") fail(line, ".tran method must be TRAP or TRBDF2");
-        if (m == "TRBDF2") out.tran.method = m;
+        if (m != "TRAP" && m != "TRBDF2" && m != "AUTO")
+          fail(line, ".tran method must be TRAP, TRBDF2 or AUTO");
+        if (m != "TRAP") out.tran.method = m;
       }
       return;
     }

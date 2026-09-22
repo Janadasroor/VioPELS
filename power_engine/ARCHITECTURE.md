@@ -26,7 +26,15 @@
     damps switch-excited Nyquist ringing ~1e65x on the interrupt fixture).
     BDF2 companions for C/L/coupled/sat (Newton included, frozen midpoint
     flux); midpoint history fields on Device; stage salt in the cache
-    signature; `.tran dt tstop [TRAP|TRBDF2]`; `Engine::setIntegrator`.
+    signature;     `.tran dt tstop [TRAP|TRBDF2]`; `Engine::setIntegrator`.
+  - Auto stiffness switching (opt-in): trap while smooth, TR-BDF2 on
+    diode-iteration pile-up (>=6 resolves/64 steps; normal clusters peak
+    at 3, coarse stress at 13), Newton strain (>=8/step), or sustained
+    Nyquist alternation (8+ consecutive same-node flips above 5% of node
+    level with non-decaying amplitude — decaying commutation bursts,
+    measured to 107 flips at 0.002%, are ignored); back to trap after 512
+    quiet steps. Histories shared, exact mid-run switching; committed
+    steps only (adaptive trials excluded).
   - After each solve, diode Vd/Id are checked and flipped
     states trigger an immediate re-solve at the same time point (up to 10
     iterations). Chatter suppressed with hysteresis (on when `Vd>Vf+1nV`,

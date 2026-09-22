@@ -40,6 +40,10 @@ class Engine {
   /// damps switching-induced trapezoidal ringing at ~2x solves per step).
   /// Histories are shared: safe to change mid-run, applies to next step.
   void setIntegrator(Integrator m) { solver_.setIntegrator(m); }
+  /// Automatic stiffness switching (trap smooth / TR-BDF2 stiff). Off by
+  /// default; explicit setIntegrator() wins and disables auto.
+  void setIntegratorAuto(bool on) { solver_.setIntegratorAuto(on); }
+  Integrator integrator() const { return solver_.integrator(); }
   void setStopTime(double tStop);
   double stopTime() const { return tStop_; }  // 0 = none
   void clearStopTime() { tStop_ = 0.0; }

@@ -118,6 +118,14 @@ void TransientSolver::rebuildMaps() {
   }
   cacheValid_[0] = false;  // maps/buffers rebuilt: drop cached factors
   cacheValid_[1] = false;
+  resolveWindow_.clear();  // fresh topology: restart stiffness detection
+  resolveWinPos_ = 0;
+  resolveWinSum_ = 0;
+  prevDx_.clear();
+  flipRun_.clear();
+  runPeak_.clear();
+  havePrevAuto_ = false;
+  cleanSteps_ = 0;
 }
 
 void TransientSolver::initialize() {
@@ -827,6 +835,66 @@ void TransientSolver::fixedStep(double dtNew) {
   ++stats_.steps;
 }
 
+void TransientSolver::autoUpdate(int newtonThisStep, int resolvesThisStep) {
+  if (!auto_.enabled) return;
+  if (static_cast<int>(resolveWindow_.size()) != auto_.window || auto_.window <= 0) {
+    resolveWindow_.assign(std::max(1, auto_.window), 0);
+    resolveWinPos_ = 0;
+    resolveWinSum_ = 0;
+  }
+  resolveWinSum_ -= resolveWindow_[resolveWinPos_];
+  resolveWindow_[resolveWinPos_] = resolvesThisStep;
+  resolveWinSum_ += resolvesThisStep;
+  resolveWinPos_ = (resolveWinPos_ + 1) % static_cast<int>(resolveWindow_.size());
+  // Sustained Nyquist alternation: the same unknown flipping delta sign
+  // every step. Physical ripple/commutation flips occasionally (safe);
+  // only full-rate alternation reaches flipNeed.
+  bool flipped = false;
+  if (!havePrevAuto_ || xPrevAuto_.size() != x_.size()) {
+    xPrevAuto_ = x_;
+    prevDx_.assign(x_.size(), 0.0);
+    flipRun_.assign(x_.size(), 0);
+    runPeak_.assign(x_.size(), 0.0);
+    havePrevAuto_ = true;
+  } else {
+    for (Eigen::Index k = 0; k < x_.size(); ++k) {
+      const double dx = x_[k] - xPrevAuto_[k];
+      const double ax = std::abs(dx);
+      // Amplitude gate: only alternation comparable to the signal counts.
+      // Sub-percent commutation bursts are harmless and must not trigger.
+      const double gate = auto_.flipRel * std::max(1.0, std::abs(x_[k]));
+      // Decay gate: a numerical limit-cycle holds amplitude; transient
+      // bursts decay (measured: 1.45 -> 0.66 -> 0.13 across 3 steps).
+      // The run continues only while |dx| stays within half of its peak.
+      if (ax > gate && std::abs(prevDx_[k]) > gate && dx * prevDx_[k] < 0.0 &&
+          (flipRun_[k] == 0 || ax >= 0.5 * runPeak_[k])) {
+        ++flipRun_[k];
+        if (ax > runPeak_[k]) runPeak_[k] = ax;
+        if (flipRun_[k] >= auto_.flipNeed) flipped = true;
+      } else {
+        flipRun_[k] = 0;
+        runPeak_[k] = ax;
+      }
+      prevDx_[k] = dx;
+    }
+    xPrevAuto_ = x_;
+  }
+  const bool stiff = resolveWinSum_ >= auto_.trigResolves ||
+                     newtonThisStep >= auto_.trigNewton || flipped;
+
+  if (stiff) {
+    cleanSteps_ = 0;
+    if (integ_ != Integrator::TrBdf2) {
+      integ_ = Integrator::TrBdf2;
+      ++stats_.integratorSwitches;
+    }
+  } else if (integ_ == Integrator::TrBdf2 && ++cleanSteps_ >= auto_.cleanBack) {
+    integ_ = Integrator::Trapezoidal;
+    ++stats_.integratorSwitches;
+    cleanSteps_ = 0;
+  }
+}
+
 void TransientSolver::step() {
   // Gate-driven switch states are already set on the circuit. Steps whose
   // topology signature (switch/diode states, values, dt) is unchanged
@@ -837,7 +905,11 @@ void TransientSolver::step() {
     throw std::runtime_error("topology change mid-run: only device values may change");
   }
   if (!adaptive_.enabled) {
+    const long long r0 = stats_.resolves, n0 = stats_.newtonIters;
     fixedStep(dt_);
+    // Committed step: stiffness detection sees accepted work only.
+    autoUpdate(static_cast<int>(stats_.newtonIters - n0),
+               static_cast<int>(stats_.resolves - r0));
     return;
   }
   // Adaptive step-doubling: full step vs two half steps on node voltages.
@@ -865,6 +937,8 @@ void TransientSolver::step() {
       // Accept half-step state (already committed); fix step counters to
       // count one accepted step with the half-path resolves/events.
       stats_.steps = base.steps + 1;
+      autoUpdate(static_cast<int>(stats_.newtonIters - base.newtonIters),
+                 static_cast<int>(stats_.resolves - base.resolves));
       // Grow unless diodes fired (non-smooth) or the step was floor-forced
       // by excess error (atFloor with err > tol: hold, don't grow).
       if (!diodesFired && err > 0.0 && (err <= adaptive_.tol || !atFloor)) {
@@ -881,7 +955,12 @@ void TransientSolver::step() {
   // Extremely stiff spot: force-advance at dtMin rather than stall.
   // (State is the last reject's restore, i.e. the attempt entry point.)
   dt_ = adaptive_.dtMin;
-  fixedStep(dt_);
+  {
+    const long long r0 = stats_.resolves, n0 = stats_.newtonIters;
+    fixedStep(dt_);
+    autoUpdate(static_cast<int>(stats_.newtonIters - n0),
+               static_cast<int>(stats_.resolves - r0));
+  }
 }
 
 void TransientSolver::stepTo(double tLimit) {

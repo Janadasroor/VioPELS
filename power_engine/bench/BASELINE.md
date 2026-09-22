@@ -16,7 +16,8 @@ bitwise identical to the 14b section (pure overhead removal).
 ```
 buck-open-6ms      steps=12000   wall=    15.4ms us/step=  1.285 checksum=73604.5196971
 vienna-60ms        steps=60000   wall=    91.3ms us/step=  1.521 checksum=28383342.7156
-vienna-trbdf2      steps=60000   wall=   126.6ms us/step=  2.110 checksum=28383411.8021
+vienna-trbdf2      steps=60000   wall=   127.4ms us/step=  2.123 checksum=28383411.8021
+vienna-auto        steps=60000   wall=    97.8ms us/step=  1.631 checksum=28383344.3736
 ladder-10          steps=2000    wall=     1.7ms us/step=  0.854 checksum=8534.87986295
 ladder-40          steps=2000    wall=     7.3ms us/step=  3.650 checksum=8534.87986295
 ladder-160         steps=2000    wall=    38.0ms us/step= 19.017 checksum=8534.87986295
@@ -32,6 +33,11 @@ trajectory — 2.4e-6 from trap). Cache-correctness proof: this checksum
 is bitwise identical with and without the factorization cache
 (119954/120000 hits). Cost ~2.3x trap wall-clock (2 stages + diode
 loops), as expected.
+
+vienna-auto engages BDF2 once (a slow-decaying commutation alternation
+at ~32ms) and returns: same event pattern as trap (41/42), checksum
+within 6e-8, +4.5% wall. Auto never fires on smooth circuits (RC:
+0 switches, bitwise-identical vc).
 
 ## v0.1.0 + factorization cache (14b) + dt-exactness fix
 
