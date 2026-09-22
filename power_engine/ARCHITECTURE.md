@@ -203,6 +203,12 @@
   switching harmonics (coherent DFT — exact for stationary line spectra),
   CISPR 32 Class B QP table + margin check. Pre-compliance screening
   only (single port, stationary, peak-vs-QP); needs dt << tsw.
+- FMI 2.0 co-simulation export (`fmi/`: vendored headers, generic wrapper
+  TU compiled per FMU with FMI2_FUNCTION_PREFIX, `fmi_pack.py`,
+  `ctypes_check.py`, vendored XSD): netlist + io map -> .fmu; inputs are
+  source devices, outputs are probes; horizons master-driven; GUID/state
+  machine enforced, unsupported calls honestly fmi2Error; engine is
+  non-assignable so instances live in unique_ptr.
 - Steady-state shooting (`steadystate.h`, `src/steadystate/`): Newton on
   the period map over continuous states (L currents, C voltages; diodes
   re-settle inside every period sim), finite-difference Jacobian,

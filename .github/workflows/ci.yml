@@ -119,3 +119,23 @@ jobs:
         run: cmake --build build-fuzz --target fuzz_netlist -j4
       - name: Run seed corpus (deterministic, fails on crash/UB)
         run: ./build-fuzz/power_engine/fuzz/fuzz_netlist power_engine/fuzz/corpus -max_len=1024 -runs=0
+
+  fmi-smoke:
+    name: ubuntu / FMI pack + ctypes + XSD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen + tools
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev unzip zip libxml2-utils python3
+      - name: Build static lib
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release &&
+          cmake --build build -j4 --target power_engine
+      - name: Pack + ctypes functional check
+        run: >
+          python3 power_engine/fmi/ctypes_check.py --pack power_engine/fmi/fmi_pack.py
+          --lib build/power_engine/libpower_engine.a --pe-include power_engine/include
+          --fmi-include power_engine/fmi/include --eigen-include /usr/include/eigen3
+          --workdir fmiwork
+      - name: XSD-validate modelDescription
+        run: xmllint --noout --schema power_engine/fmi/schema/fmi2ModelDescription.xsd fmiwork/pack/modelDescription.xml

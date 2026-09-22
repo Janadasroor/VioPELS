@@ -78,6 +78,9 @@ set(POWER_ENGINE_SOURCES
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})
 add_library(power_engine_shared SHARED ${POWER_ENGINE_SOURCES})
 set_target_properties(power_engine_shared PROPERTIES OUTPUT_NAME power_engine)
+# PIC on the static lib too: consumers (e.g. the FMI wrapper .so) link it
+# into shared objects; cost is negligible on x86-64.
+set_target_properties(power_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 foreach(tgt power_engine power_engine_shared)
   target_include_directories(${tgt} PUBLIC

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Pack a VioPELS netlist + I/O map into an FMI 2.0 Co-Simulation FMU.
+
+Usage:
+  fmi_pack.py --name Buck --netlist buck.net --inputs V1 --outputs v:3 \\
+      --lib build/power_engine/libpower_engine.a \\
+      --pe-include power_engine/include --fmi-include power_engine/fmi/include \\
+      --eigen-include /usr/include/eigen3 --out /tmp/Buck.fmu [--tstop 0.006]
+
+Layout: modelDescription.xml + binaries/linux64/<Name>.so + resources/
+(model.netlist, io.txt, modelGuid.txt). The wrapper TU is model-agnostic;
+FMI2_FUNCTION_PREFIX bakes the model name into the exports (per standard).
+"""
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+import xml.etree.ElementTree as ET
+
+WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fmi_wrapper.cpp")
+
+
+def esc(s):
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--name", required=True)
+    ap.add_argument("--netlist", required=True)
+    ap.add_argument("--inputs", default="")
+    ap.add_argument("--outputs", default="")
+    ap.add_argument("--lib", required=True)
+    ap.add_argument("--pe-include", required=True)
+    ap.add_argument("--fmi-include", required=True)
+    ap.add_argument("--eigen-include", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--tstop", default="0.006")
+    ap.add_argument("--cxx", default="c++")
+    ap.add_argument("--workdir", default=None)
+    args = ap.parse_args()
+
+    if not args.name.replace("_", "").isalnum() or args.name[0].isdigit():
+        sys.exit("model name must be C-identifier-like")
+    inputs = [s for s in args.inputs.split(",") if s]
+    outputs = [s for s in args.outputs.split(",") if s]
+    with open(args.netlist) as f:
+        netlist = f.read()
+
+    guid = str(uuid.uuid4())
+    work = args.workdir or tempfile.mkdtemp(prefix="fmipack-")
+    res = os.path.join(work, "resources")
+    bind = os.path.join(work, "binaries", "linux64")
+    os.makedirs(res, exist_ok=True)
+    os.makedirs(bind, exist_ok=True)
+    with open(os.path.join(res, "model.netlist"), "w") as f:
+        f.write(netlist)
+    with open(os.path.join(res, "io.txt"), "w") as f:
+        for d in inputs:
+            f.write(f"input {d}\n")
+        for p in outputs:
+            f.write(f"output {p}\n")
+    with open(os.path.join(res, "modelGuid.txt"), "w") as f:
+        f.write(guid + "\n")
+
+    vars_xml = []
+    for i, d in enumerate(inputs):
+        vars_xml.append(
+            f'    <ScalarVariable name="{esc(d)}" valueReference="{i}" '
+            f'causality="input" variability="continuous"><Real start="0.0"/></ScalarVariable>')
+    for j, p in enumerate(outputs):
+        vars_xml.append(
+            f'    <ScalarVariable name="{esc(p)}" valueReference="{len(inputs) + j}" '
+            f'causality="output" variability="continuous"><Real/></ScalarVariable>')
+    unknowns = "\n".join(
+        f'      <Unknown index="{i + 1}"/>' for i in range(len(inputs) + len(outputs)))
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="2.0" modelName="{esc(args.name)}" guid="{guid}" numberOfEventIndicators="0">
+  <CoSimulation modelIdentifier="{esc(args.name)}_"/>
+  <LogCategories><Category name="logAll"/><Category name="logError"/></LogCategories>
+  <DefaultExperiment startTime="0.0" stopTime="{esc(args.tstop)}"/>
+  <ModelVariables>
+{chr(10).join(vars_xml)}
+  </ModelVariables>
+  <ModelStructure>
+    <Outputs>
+{unknowns}
+    </Outputs>
+  </ModelStructure>
+</fmiModelDescription>
+"""
+    xml_path = os.path.join(work, "modelDescription.xml")
+    with open(xml_path, "w") as f:
+        f.write(xml)
+    # Well-formedness now (schema check is the validator's job; CI runs xmllint).
+    ET.parse(xml_path)
+
+    so = os.path.join(bind, f"{args.name}.so")
+    cmd = [args.cxx, "-shared", "-fPIC", "-O2",
+           f"-DFMI2_FUNCTION_PREFIX={args.name}_", WRAPPER,
+           "-I", args.pe_include, "-I", args.fmi_include, "-I", args.eigen_include,
+           args.lib, "-o", so]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"wrapper compile failed:\n{r.stdout}\n{r.stderr}")
+    fmu = os.path.abspath(args.out)
+    if os.path.exists(fmu):
+        os.remove(fmu)
+    subprocess.run(["zip", "-qr", fmu, "modelDescription.xml", "binaries", "resources"],
+                   cwd=work, check=True)
+    print(f"packed {fmu} ({os.path.getsize(fmu)} bytes)")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
