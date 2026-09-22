@@ -45,6 +45,9 @@ struct SolverStats {
   long long newtonIters = 0;   ///< Newton linearizations (saturable magnetics)
   long long factorSkips = 0;   ///< solves reusing a cached factorization
   long long integratorSwitches = 0;  ///< auto-integrator mode changes
+  long long diodeCapHits = 0;  ///< diode loops that exhausted kMaxDiodeIters
+                               ///< and accepted the last state (refine-roadmap
+                               ///< R4 safety-net monitor; ~0 on all fixtures)
 };
 
 /// Opaque solver snapshot: clock, last solution vector, and full device

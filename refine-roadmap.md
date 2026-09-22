@@ -104,9 +104,18 @@ Gaps found (the refinement backlog §C):
   new `fuzz/corpus/{expr,etable}` seeds verified parse+serialize round-trip.
   Etable product cap dropped: subsumed by the input cap (values text bounds
   the grid). 24/24 green.
-- [ ] **R4. Diode-iteration observability**: `SolverStats` chatter counter
-  (iterations-hit-cap events) + `bench/BASELINE.md` entry; no behavior
-  change. Later: consider escalating chronic saturation to BDF2 hint.
+- [x] **R4. Diode-iteration observability** (DONE 2026-09-22):
+  `SolverStats::diodeCapHits` incremented at both `convergeStep` diode loops
+  on exhaustion (pure monitor, no behavior change); `pe_bench` reports
+  `capHits=` per fixture + `BASELINE.md` entry (0 on all fixtures, checksums
+  unchanged); `ARCHITECTURE.md` stats listing extended. New
+  `DiodeCapHits.ZeroOnCleanFixtures` (RC zero, buck-with-recovery zero with
+  `diodeEvents>0`, adaptive+diode snapshot/restore path zero). Finding:
+  exhaustion is not physically forceable with ideal R/source/diode nets
+  (turn-on is sticky: stiff sources keep one state consistent; ripple
+  cascades damp out) — the cap stays a safety net, and the zeros double as
+  evidence for the 14c decline. Later: consider escalating chronic
+  saturation to a BDF2 hint. 24/24 green.
 - [ ] **R5. Topology generation counter**: `Circuit::generation()` bumped on
   any add/remove; `solver.step()` throws on mismatch even when sizes agree.
   Test: same-size swap throws instead of aliasing.

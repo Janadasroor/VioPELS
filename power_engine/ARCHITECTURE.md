@@ -49,7 +49,10 @@
     states trigger an immediate re-solve at the same time point (up to 10
     iterations). Chatter suppressed with hysteresis (on when `Vd>Vf+1nV`,
     off when `Id<-1nA`). `SolverStats{steps,diodeEvents,resolves,
-    sparseSolves,newtonIters,factorSkips}`.
+    sparseSolves,newtonIters,factorSkips,diodeCapHits}` — `diodeCapHits`
+    counts loops that exhausted all 10 iterations and accepted the last
+    state (safety-net monitor, ~0 on every fixture; ideal-diode + R +
+    independent-source nets converge in a few passes by construction).
   - Transformer: branch currents Ip/Is with rows `Vp-n*Vs=0`,
     `n*Ip+Is=0` (KCL coupling kept; ideal algebraic, DC passes — no
     magnetics/saturation by design).

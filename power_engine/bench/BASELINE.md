@@ -28,6 +28,10 @@ ladder-320         steps=2000    wall=   125.0ms us/step= 62.499 checksum=8534.8
 Per-fixture solver stats (new in pe_bench): buck resolves=239 (2% of
 steps), vienna resolves=41 (0.07%) — diode iteration is NOT a speed
 problem (see 14c note below). Cache hits: buck 97%, vienna/ladders ~100%.
+diodeCapHits (R4 monitor: loops that exhausted all 10 diode iterations and
+accepted the last state) is 0 on every fixture — buck, vienna (+trbdf2,
++auto variants), rc-adaptive, all ladders — confirming the cap is a pure
+safety net on physical circuits.
 
 vienna-trbdf2 has its own checksum (different method, different
 trajectory — 2.4e-6 from trap). Cache-correctness proof: this checksum

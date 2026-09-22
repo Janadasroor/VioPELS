@@ -21,14 +21,15 @@ struct Result {
   long long resolves = 0;     // diode-iteration re-solves
   long long diodeEvents = 0;  // commutations
   long long factorSkips = 0;  // cached-factorization hits
+  long long capHits = 0;      // diode loops exhausted (R4 monitor)
 };
 
 void report(const Result& r) {
   std::printf("%-18s steps=%-7lld wall=%8.1fms us/step=%7.3f checksum=%.12g\n",
               r.name.c_str(), r.steps, r.wallMs,
               r.wallMs * 1000.0 / static_cast<double>(r.steps), r.checksum);
-  std::printf("%-18s resolves=%lld events=%lld skips=%lld\n", "", r.resolves,
-              r.diodeEvents, r.factorSkips);
+  std::printf("%-18s resolves=%lld events=%lld skips=%lld capHits=%lld\n", "", r.resolves,
+              r.diodeEvents, r.factorSkips, r.capHits);
 }
 
 // Open-loop buck from the README netlist sketch: 12V, 20kHz, D=0.5,
@@ -63,7 +64,7 @@ Rload 3 0 5
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
-  return {"buck-open-6ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+  return {"buck-open-6ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips, st.diodeCapHits};
 }
 
 // Uncontrolled Vienna diode bridge, 60ms @ 1us (60k steps, switching).
@@ -116,7 +117,7 @@ Result vienna() {
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
-  return {"vienna-60ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+  return {"vienna-60ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips, st.diodeCapHits};
 }
 
 // Same Vienna fixture under TR-BDF2 (own checksum baseline; ~2x solves).
@@ -170,7 +171,7 @@ Result viennaTrBdf2() {
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
-  return {"vienna-trbdf2", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+  return {"vienna-trbdf2", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips, st.diodeCapHits};
 }
 
 // Same Vienna fixture under auto switching (expect the trap checksum:
@@ -225,7 +226,7 @@ Result viennaAuto() {
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
-  return {"vienna-auto", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+  return {"vienna-auto", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips, st.diodeCapHits};
 }
 
 // RC charge under adaptive TR-BDF2 (1ms outer frames, tol 1e-3): the
@@ -250,7 +251,7 @@ Result rcAdaptive() {
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
-  return {"rc-adaptive", st.steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+  return {"rc-adaptive", st.steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips, st.diodeCapHits};
 }
 
 // RC ladder scaling probe: N rungs (1k series, 1uF shunt), 2000 steps @
@@ -285,7 +286,7 @@ Result ladder(int n) {
       std::chrono::duration<double, std::milli>(t1 - t0).count();
   const auto& st = eng.solverStats();
   return {"ladder-" + std::to_string(n), steps, ms, sum, st.resolves, st.diodeEvents,
-          st.factorSkips};
+          st.factorSkips, st.diodeCapHits};
 }
 
 }  // namespace

@@ -180,3 +180,63 @@ TEST(SlewTransition, RetoggleMidRamp) {
   EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 10.0, 0.01);
   EXPECT_TRUE(std::isfinite(eng.deviceCurrent("S1")));
 }
+
+// Refine-roadmap R4: diodeCapHits safety-net monitor. Clean fixtures never
+// saturate the 10-iteration diode loop (ideal-diode + R + independent-source
+// nets converge in a few passes by construction — the ripple needed to
+// exhaust the loop is damped out, which is also why item 14c was declined).
+// Exhaustion is therefore not physically forceable; the test locks in the
+// zero baseline and the counter plumbing (incl. snapshot round-trip).
+TEST(DiodeCapHits, ZeroOnCleanFixtures) {
+  {
+    Engine eng;  // diode-free RC: loop breaks on the first scan
+    eng.setTimeStep(1e-6);
+    eng.circuit().addVoltageSource("V1", 1, 0, 1.0);
+    eng.circuit().addResistor("R1", 1, 2, 1000.0);
+    eng.circuit().addCapacitor("C1", 2, 0, 1e-6, 0.0);
+    eng.setStopTime(50e-6);
+    eng.start();
+    while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+    EXPECT_EQ(eng.solverStats().diodeCapHits, 0);
+  }
+  {
+    Engine eng;  // buck with switch, diode, recovery: real commutations
+    eng.setTimeStep(0.5e-6);
+    eng.circuit().addVoltageSource("V1", 1, 0, 12.0);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addDiode("D1", 0, 2, 0.7, 10e-3, 1e6, 50e-9, 25e-9);
+    eng.circuit().addInductor("L1", 2, 3, 200e-6, 0.0);
+    eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+    eng.circuit().addResistor("R1", 3, 0, 5.0);
+    eng.setStopTime(200e-6);
+    eng.start();
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      if (eng.time() >= 100e-6) eng.setSwitch("S1", false);
+      eng.step();
+    }
+    const auto& st = eng.solverStats();
+    EXPECT_GT(st.diodeEvents, 0);  // commutations happened...
+    EXPECT_EQ(st.diodeCapHits, 0);  // ...but the loop never saturated
+  }
+  {
+    // Adaptive trials snapshot/restore whole SolverStats (incl. the new
+    // field): diode-active adaptive run completes clean with zero hits.
+    Engine eng;
+    eng.setTimeStep(0.5e-6);
+    eng.circuit().addVoltageSource("V1", 1, 0, 12.0);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addDiode("D1", 0, 2, 0.7, 10e-3, 1e6, 50e-9, 25e-9);
+    eng.circuit().addInductor("L1", 2, 3, 200e-6, 0.0);
+    eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+    eng.circuit().addResistor("R1", 3, 0, 5.0);
+    eng.setStopTime(200e-6);
+    eng.setAdaptive(1e-3, 1e-9, 10e-6);
+    eng.start();
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      if (eng.time() >= 100e-6) eng.setSwitch("S1", false);
+      eng.step();
+    }
+    EXPECT_EQ(eng.solverStats().diodeCapHits, 0);
+    EXPECT_GT(eng.currentSolution().probes.at("v:3"), 0.0);
+  }
+}

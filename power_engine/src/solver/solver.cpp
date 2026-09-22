@@ -849,12 +849,15 @@ void TransientSolver::convergeStep() {
     for (int k = 0; k < kMaxNewtonIters; ++k) {
       assemble(true);
       x_ = solveLinear();
-      for (int iter = 0; iter < kMaxDiodeIters; ++iter) {
+      int iter = 0;
+      for (; iter < kMaxDiodeIters; ++iter) {
         if (!updateDiodeStates(x_)) break;
         assemble(true);
         x_ = solveLinear();
         ++stats_.resolves;
       }
+      // R4 (monitor only): exhausted without settling — last state accepted.
+      if (iter == kMaxDiodeIters) ++stats_.diodeCapHits;
       ++stats_.newtonIters;
       if (newtonUpdate(x_)) break;
       if (k == kMaxNewtonIters - 1) {
@@ -864,12 +867,15 @@ void TransientSolver::convergeStep() {
   } else {
     assembleCached();
     x_ = solveFactors();
-    for (int iter = 0; iter < kMaxDiodeIters; ++iter) {
+    int iter = 0;
+    for (; iter < kMaxDiodeIters; ++iter) {
       if (!updateDiodeStates(x_)) break;
       assembleCached();
       x_ = solveFactors();
       ++stats_.resolves;
     }
+    // R4 (monitor only): exhausted without settling — last state accepted.
+    if (iter == kMaxDiodeIters) ++stats_.diodeCapHits;
   }
 }
 
