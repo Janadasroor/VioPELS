@@ -44,6 +44,28 @@ cmake --build build-san && ctest --test-dir build-san --output-on-failure
 CI (`.github/workflows/ci.yml`): Release matrix over
 Ubuntu/Windows/macOS × gcc/clang/MSVC plus an ASan+UBSan job — all green.
 
+## Cross-validation vs ngspice + benchmark
+
+`power_engine/xval/xval.py` runs identical fixtures in our engine and in
+ngspice 45 batch mode (CI runs it on Ubuntu; needs `ngspice` + `python3`
+locally). Settled-window means agree within the bounds (measured):
+
+| fixture | ours | ngspice | rel. dev. | bound |
+|---|---|---|---|---|
+| buck Vout mean, last 1ms | 5.9635V | 5.9665V | 5.0e-4 | 3e-2 |
+| Vienna Vdc mean, 40–60ms | 523.44V | 522.64V | 1.5e-3 | 3e-2 |
+
+Wall-clock on the same fixtures (our demos print CSV; ngspice runs
+variable-step — methodology in `xval.py`):
+
+| fixture | ours | ngspice |
+|---|---|---|
+| buck 6ms | 0.03s | 24.7s |
+| Vienna 60ms | 0.32s | 27.2s |
+
+Ideal-switch fixed-step vs SPICE variable-step: the expected
+orders-of-magnitude gap on system-long runs, measured honestly.
+
 ## Netlist sketch
 ```
 .param VIN 12 FSW 20k D 0.5
