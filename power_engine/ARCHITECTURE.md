@@ -10,16 +10,26 @@
 - `src/solver/solver.cpp`: MNA assembly + trapezoidal companions:
   - C: `G=2C/dt`, `Ihist=-G*Vprev-Iprev`
   - L: `G=dt/2L`, `Ihist=Iprev+G*Vprev`
-  - Switch: resistor `closed ? Ron : Roff`, re-assembled every step.
-  - Diode conducting: Norton `G=1/Ron || Isrc=G*Vf` (so `Vd=Vf+I*Ron`);
-    blocking: `Roff`. After each solve, diode Vd/Id are checked and flipped
+  - Switch: resistor `closed ? Ron : Roff`; diode conducting: Norton
+    `G=1/Ron || Isrc=G*Vf` (so `Vd=Vf+I*Ron`); blocking: `Roff`.
+    Factorization caching (14b): the MNA matrix depends only on the
+    topology signature (switch/diode states incl. diode-recovery-active,
+    R/L/C/k values, dt) — histories, source values and recovery currents
+    live in the RHS. Unchanged-signature steps skip A-reassembly and
+    refactorization (`factorSkips`); saturable-Newton circuits bypass.
+    Full frames pass exactly `baseDt` (never recomputed `(t+dt)-t`, whose
+    1-ulp jitter would defeat the cache).
+  - After each solve, diode Vd/Id are checked and flipped
     states trigger an immediate re-solve at the same time point (up to 10
     iterations). Chatter suppressed with hysteresis (on when `Vd>Vf+1nV`,
-    off when `Id<-1nA`). `SolverStats{steps,diodeEvents,resolves}`.
+    off when `Id<-1nA`). `SolverStats{steps,diodeEvents,resolves,
+    sparseSolves,newtonIters,factorSkips}`.
   - Transformer: branch currents Ip/Is with rows `Vp-n*Vs=0`,
     `n*Ip+Is=0` (KCL coupling kept; ideal algebraic, DC passes — no
     magnetics/saturation by design).
-  - Solved per-step with `Eigen::FullPivLU`; singular → throw.
+  - Solved per-step with `Eigen::PartialPivLU` (dense) / `SparseLU`
+    (rows >= 64, symbolic pattern cached); singular → throw. Cached
+    factors are reused across unchanged-signature steps (see above).
   - Histories (incl. switch/diode/transformer branch currents) updated once
     per accepted step; deterministic, single-threaded.
 - `src/api/engine.cpp`: owns `Circuit` + `TransientSolver`, exposes

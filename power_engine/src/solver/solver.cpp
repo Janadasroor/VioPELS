@@ -1,6 +1,7 @@
 #include "power_engine/solver.h"
 
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 
@@ -69,6 +70,7 @@ void TransientSolver::rebuildMaps() {
   rowB_.assign(devs.size(), -1);
   rowC_.assign(devs.size(), -1);
   rowD_.assign(devs.size(), -1);
+  rowE_.assign(devs.size(), -1);
   std::size_t k = 0;
   for (std::size_t i = 0; i < devs.size(); ++i) {
     const auto& d = devs[i];
@@ -79,6 +81,7 @@ void TransientSolver::rebuildMaps() {
     rowB_[i] = r2;
     if (d.type == DeviceType::VoltageSource) {
       extraRow_[d.name] = nodeList_.size() + k;
+      rowE_[i] = static_cast<int>(nodeList_.size() + k);
       k += 1;
     } else if (d.type == DeviceType::Transformer) {
       const int r3 = nodeRow(d.n3);
@@ -87,6 +90,7 @@ void TransientSolver::rebuildMaps() {
       rowC_[i] = r3;
       rowD_[i] = r4;
       extraRow_[d.name] = nodeList_.size() + k;
+      rowE_[i] = static_cast<int>(nodeList_.size() + k);
       k += 2;  // Ip row then Is row
     } else if (d.type == DeviceType::CoupledInductor) {
       const int r3 = nodeRow(d.n3);
@@ -105,10 +109,11 @@ void TransientSolver::rebuildMaps() {
     // Topology-fixed sparsity pattern: switch/diode states only change
     // values, so factor the symbolic pattern once here. (No status to
     // check: analyzePattern reports via the later factorize info.)
-    assemble();
+    assemble(true);
     workAs_ = workA_.sparseView();
     workSlu_.analyzePattern(workAs_);
   }
+  cacheValid_ = false;  // maps/buffers rebuilt: drop any cached factors
 }
 
 void TransientSolver::initialize() {
@@ -180,10 +185,10 @@ static inline double recoveryCurrent(const Device& d) {
   return d.recI * std::exp(-elapsed / d.ttail);
 }
 
-void TransientSolver::assemble() const {
+void TransientSolver::assemble(bool withMatrix) const {
   Eigen::MatrixXd& A = workA_;
   Eigen::VectorXd& z = workZ_;
-  A.setZero();
+  if (withMatrix) A.setZero();
   z.setZero();
 
   // KCL coupling for a branch current flowing r1->r2 through extra row r.
@@ -205,20 +210,20 @@ void TransientSolver::assemble() const {
     const int r2 = rowB_[i];
     switch (d.type) {
       case DeviceType::Resistor: {
-        stampG(A, r1, r2, 1.0 / d.value);
+        if (withMatrix) stampG(A, r1, r2, 1.0 / d.value);
         break;
       }
       case DeviceType::Capacitor: {
         const double g = 2.0 * d.value / dt_;  // trapezoidal
         const double iHist = -g * d.v_prev - d.i_prev;
-        stampG(A, r1, r2, g);
+        if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, iHist);
         break;
       }
       case DeviceType::Inductor: {
         const double g = dt_ / (2.0 * d.value);  // trapezoidal
         const double iHist = d.i_prev + g * d.v_prev;
-        stampG(A, r1, r2, g);
+        if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, iHist);
         break;
       }
@@ -227,17 +232,17 @@ void TransientSolver::assemble() const {
         break;
       }
       case DeviceType::VoltageSource: {
-        const auto row = static_cast<Eigen::Index>(extraRow_.at(d.name));
-        stampBranch(r1, r2, row);
+        const auto row = static_cast<Eigen::Index>(rowE_[i]);
+        if (withMatrix) stampBranch(r1, r2, row);
         z(row) = d.value;
         break;
       }
       case DeviceType::Switch: {
         // Ideal switch as Ron/Roff (+ parallel tail source while recovering).
         if (d.closed) {
-          stampG(A, r1, r2, 1.0 / d.ron);
+          if (withMatrix) stampG(A, r1, r2, 1.0 / d.ron);
         } else {
-          stampG(A, r1, r2, 1.0 / d.roff);
+          if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
           if (d.recT > 0.0) stampI(z, r1, r2, recoveryCurrent(d));
         }
         break;
@@ -252,10 +257,10 @@ void TransientSolver::assemble() const {
         } else if (d.conducting) {
           // Norton: G=1/Ron || current source G*Vf (cathode->anode).
           const double g = 1.0 / d.ron;
-          stampG(A, r1, r2, g);
+          if (withMatrix) stampG(A, r1, r2, g);
           stampI(z, r1, r2, -g * d.vf);
         } else {
-          stampG(A, r1, r2, 1.0 / d.roff);
+          if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
         }
         break;
       }
@@ -264,23 +269,27 @@ void TransientSolver::assemble() const {
         // and Is (n3->n4). KCL coupling like two zero-volt sources, plus:
         //   row Ip: Vp - n*Vs = 0   (voltage constraint)
         //   row Is: n*Ip + Is = 0   (power conservation)
-        const auto base = static_cast<Eigen::Index>(extraRow_.at(d.name));
+        const auto base = static_cast<Eigen::Index>(rowE_[i]);
         const auto rIp = base;
         const auto rIs = base + 1;
         const double n = d.ratio;
         const int r3 = rowC_[i];
         const int r4 = rowD_[i];
-        stampBranch(r1, r2, rIp);
-        stampBranch(r3, r4, rIs);
+        if (withMatrix) stampBranch(r1, r2, rIp);
+        if (withMatrix) stampBranch(r3, r4, rIs);
         // Row rIp currently reads V(n1)-V(n2)=0; extend with -n*Vs.
-        if (r3 >= 0) A(rIp, r3) -= n;
-        if (r4 >= 0) A(rIp, r4) += n;
+        if (withMatrix) {
+          if (r3 >= 0) A(rIp, r3) -= n;
+          if (r4 >= 0) A(rIp, r4) += n;
+        }
         // Row rIs currently reads V(n3)-V(n4)=0; replace the ROW entries
         // (keep the COLUMN KCL coupling of Is) with n*Ip+Is=0.
-        if (r3 >= 0) A(rIs, r3) = 0.0;
-        if (r4 >= 0) A(rIs, r4) = 0.0;
-        A(rIs, rIp) += n;
-        A(rIs, rIs) += 1.0;
+        if (withMatrix) {
+          if (r3 >= 0) A(rIs, r3) = 0.0;
+          if (r4 >= 0) A(rIs, r4) = 0.0;
+          A(rIs, rIp) += n;
+          A(rIs, rIs) += 1.0;
+        }
         z(rIp) = 0.0;
         z(rIs) = 0.0;
         break;
@@ -306,11 +315,13 @@ void TransientSolver::assemble() const {
                                    {-g11, g11, -g12, g12},
                                    {g12, -g12, g22, -g22},
                                    {-g12, g12, -g22, g22}};
-        for (int a = 0; a < 4; ++a) {
-          if (rows[a] < 0) continue;
-          for (int b = 0; b < 4; ++b) {
-            if (rows[b] < 0) continue;
-            A(rows[a], rows[b]) += gmat[a][b];
+        if (withMatrix) {
+          for (int a = 0; a < 4; ++a) {
+            if (rows[a] < 0) continue;
+            for (int b = 0; b < 4; ++b) {
+              if (rows[b] < 0) continue;
+              A(rows[a], rows[b]) += gmat[a][b];
+            }
           }
         }
         stampI(z, r1, r2, h1);
@@ -324,7 +335,7 @@ void TransientSolver::assemble() const {
         const double g = dt_ / (2.0 * ld);
         const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
         const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
-        stampG(A, r1, r2, g);
+        if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, ieq);
         break;
       }
@@ -332,7 +343,7 @@ void TransientSolver::assemble() const {
   }
 }
 
-Eigen::VectorXd TransientSolver::solveLinear() const {
+void TransientSolver::factorize() const {
   if (workA_.rows() >= kSparseThreshold) {
     workAs_ = workA_.sparseView();
     workSlu_.factorize(workAs_);
@@ -340,8 +351,7 @@ Eigen::VectorXd TransientSolver::solveLinear() const {
       throw std::runtime_error(
           "singular MNA matrix (check topology: floating node or V-source loop?)");
     }
-    ++stats_.sparseSolves;
-    return workSlu_.solve(workZ_);
+    return;
   }
   workLu_.compute(workA_);
   // Singularity guard: MNA structural singularities (floating nodes,
@@ -356,7 +366,93 @@ Eigen::VectorXd TransientSolver::solveLinear() const {
     throw std::runtime_error(
         "singular MNA matrix (check topology: floating node or V-source loop?)");
   }
+}
+
+Eigen::VectorXd TransientSolver::solveFactors() const {
+  if (workA_.rows() >= kSparseThreshold) {
+    ++stats_.sparseSolves;
+    return workSlu_.solve(workZ_);
+  }
   return workLu_.solve(workZ_);
+}
+
+Eigen::VectorXd TransientSolver::solveLinear() const {
+  factorize();
+  return solveFactors();
+}
+
+namespace {
+// FNV-1a helpers for the topology signature (within-run use only:
+// determinism on this machine, no cross-platform stability needed).
+inline void hashWord(std::uint64_t& h, std::uint64_t w) {
+  h ^= w;
+  h *= 1099511628211ULL;
+}
+inline std::uint64_t dblBits(double v) {
+  std::uint64_t w = 0;
+  std::memcpy(&w, &v, sizeof(w));
+  return w;
+}
+}  // namespace
+
+TransientSolver::MatrixSig TransientSolver::matrixSig() const {
+  std::uint64_t h = 1469598103934665603ULL;
+  hashWord(h, dblBits(dt_));
+  const auto& devs = circuit_.devices();
+  hashWord(h, static_cast<std::uint64_t>(devs.size()));
+  for (const auto& d : devs) {
+    switch (d.type) {
+      case DeviceType::Resistor:
+      case DeviceType::Capacitor:
+      case DeviceType::Inductor:
+        hashWord(h, dblBits(d.value));
+        break;
+      case DeviceType::CoupledInductor:
+        hashWord(h, dblBits(d.l1));
+        hashWord(h, dblBits(d.l2));
+        hashWord(h, dblBits(d.m));
+        break;
+      case DeviceType::Switch:
+        hashWord(h, d.closed ? 1ULL : 0ULL);
+        hashWord(h, dblBits(d.ron));
+        hashWord(h, dblBits(d.roff));
+        break;
+      case DeviceType::Diode:
+        // Recovery (recT>0) replaces the Norton shunt with an impressed
+        // source: matrix-affecting. recT's exact value is z-only.
+        hashWord(h, d.conducting ? 1ULL : 0ULL);
+        hashWord(h, d.recT > 0.0 ? 1ULL : 0ULL);
+        hashWord(h, dblBits(d.ron));
+        hashWord(h, dblBits(d.roff));
+        break;
+      case DeviceType::Transformer:
+        hashWord(h, dblBits(d.ratio));
+        break;
+      case DeviceType::SatInductor:
+        // Defensive: saturable circuits bypass the cache (Newton), but a
+        // changing operating point must never alias a cached signature.
+        hashWord(h, dblBits(d.value));
+        hashWord(h, dblBits(d.newton_ik));
+        break;
+      case DeviceType::VoltageSource:
+      case DeviceType::CurrentSource:
+        break;  // values stamp z only; the +/-1 branch pattern is static
+    }
+  }
+  return MatrixSig{h};
+}
+
+void TransientSolver::assembleCached() const {
+  const MatrixSig s = matrixSig();
+  if (cacheValid_ && s == cachedSig_) {
+    assemble(false);
+    ++stats_.factorSkips;
+    return;
+  }
+  assemble(true);
+  factorize();
+  cachedSig_ = s;
+  cacheValid_ = true;
 }
 
 bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
@@ -500,11 +596,11 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x) {
   for (std::size_t i = 0; i < devs.size(); ++i) {
     auto& d = devs[i];
     if (d.type == DeviceType::VoltageSource) {
-      const auto row = static_cast<Eigen::Index>(extraRow_.at(d.name));
+      const auto row = static_cast<Eigen::Index>(rowE_[i]);
       d.i_prev = x(row);
       d.v_prev = d.value;
     } else if (d.type == DeviceType::Transformer) {
-      const auto base = static_cast<Eigen::Index>(extraRow_.at(d.name));
+      const auto base = static_cast<Eigen::Index>(rowE_[i]);
       d.i_prev = x(base);        // Ip, primary n1->n2
       d.i2_prev = x(base + 1);   // Is, secondary n3->n4
       d.v_prev = vRow(rowA_[i]) - vRow(rowB_[i]);
@@ -588,11 +684,11 @@ void TransientSolver::fixedStep(double dtNew) {
       if (d.type == DeviceType::SatInductor) d.newton_ik = d.i_prev;
     }
     for (int k = 0; k < kMaxNewtonIters; ++k) {
-      assemble();
+      assemble(true);
       x_ = solveLinear();
       for (int iter = 0; iter < kMaxDiodeIters; ++iter) {
         if (!updateDiodeStates(x_)) break;
-        assemble();
+        assemble(true);
         x_ = solveLinear();
         ++stats_.resolves;
       }
@@ -603,12 +699,12 @@ void TransientSolver::fixedStep(double dtNew) {
       }
     }
   } else {
-    assemble();
-    x_ = solveLinear();
+    assembleCached();
+    x_ = solveFactors();
     for (int iter = 0; iter < kMaxDiodeIters; ++iter) {
       if (!updateDiodeStates(x_)) break;
-      assemble();
-      x_ = solveLinear();
+      assembleCached();
+      x_ = solveFactors();
       ++stats_.resolves;
     }
   }
@@ -618,10 +714,11 @@ void TransientSolver::fixedStep(double dtNew) {
 }
 
 void TransientSolver::step() {
-  // Gate-driven switch states are already set on the circuit; matrices are
-  // re-assembled every step so no switching event is missed at step granularity.
-  // Diodes iterate to consistency within the step (no time advance during
-  // iteration), then histories advance once.
+  // Gate-driven switch states are already set on the circuit. Steps whose
+  // topology signature (switch/diode states, values, dt) is unchanged
+  // reuse the cached factorization (RHS-only assemble); anything else
+  // re-factorizes. Diodes iterate to consistency within the step (no time
+  // advance during iteration), then histories advance once.
   if (rowA_.size() != circuit_.devices().size()) {
     throw std::runtime_error("topology change mid-run: only device values may change");
   }

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 // Eigen is third-party: silence its headers under MSVC /W4 (GCC/Clang use
@@ -25,6 +26,7 @@ struct SolverStats {
   long long resolves = 0;     ///< extra MNA re-solves due to diode iteration
   long long sparseSolves = 0;  ///< linear solves via SparseLU (large systems)
   long long newtonIters = 0;   ///< Newton linearizations (saturable magnetics)
+  long long factorSkips = 0;   ///< solves reusing a cached factorization
 };
 
 /// Opaque solver snapshot: clock, last solution vector, and full device
@@ -38,8 +40,14 @@ struct SolverState {
 };
 
 /// Fixed-step trapezoidal MNA transient solver.
-/// Phase 2: ideal switches (Ron/Roff, gate-controlled, re-assembled every
-/// step) + auto-commutated diodes with in-step event iteration.
+/// Phase 2: ideal switches (Ron/Roff, gate-controlled) + auto-commutated
+/// diodes with in-step event iteration.
+/// Factorization caching (item 14b): the MNA matrix depends only on the
+/// topology signature (switch/diode states, R/L/C/k values, dt) — not on
+/// histories or source values, which live in the RHS. Steps with an
+/// unchanged signature skip reassembly of A and refactorization
+/// (counted as factorSkips); any state/value/dt change re-factorizes.
+/// Saturable-inductor circuits bypass the cache (Newton relinearizes).
 /// Numerical decisions: trapezoidal companions for L/C; conducting diode =
 /// Norton equivalent (G=1/Ron in parallel with current source G*Vf, i.e.
 /// Vd = Vf + I*Ron); blocking diode = Roff. After each solve, diode
@@ -98,9 +106,20 @@ class TransientSolver {
 
  private:
   void rebuildMaps();
-  void assemble() const;  // fills workA_/workZ_ (reused buffers)
+  /// Fill workA_/workZ_. withMatrix=false refreshes only the RHS (z):
+  /// valid when the cached factorization still matches (same topology
+  /// signature + dt) — histories, source values and recovery currents
+  /// live in z only.
+  void assemble(bool withMatrix) const;
   void updateHistories(const Eigen::VectorXd& x);
-  Eigen::VectorXd solveLinear() const;  // PartialPivLU on work buffers
+  Eigen::VectorXd solveLinear() const;  // factorize + solve (full path)
+  void factorize() const;               // (re)factor workA_ into workLu_/workSlu_
+  Eigen::VectorXd solveFactors() const;  // triangular solve with workZ_
+  /// Assemble path with factorization caching: full assemble + factorize
+  /// on signature change, RHS-only assemble otherwise (counts factorSkips).
+  /// Saturable-inductor circuits bypass the cache (Newton relinearizes A
+  /// every iteration).
+  void assembleCached() const;
   /// Check diode states against current x; flip any that must commutate.
   /// Returns true if at least one diode changed state.
   bool updateDiodeStates(const Eigen::VectorXd& x);
@@ -135,6 +154,7 @@ class TransientSolver {
   std::map<std::string, std::size_t> extraRow_;  // device -> base extra-var row
   // Precomputed MNA rows per device index (-1 = ground).
   std::vector<int> rowA_, rowB_, rowC_, rowD_;
+  std::vector<int> rowE_;  // extra-var base row per device (-1 if none)
   bool hasNonlinear_ = false;  // any saturable inductor present
   Eigen::VectorXd x_;                   // last solution
   // Reused across steps: no per-step heap allocation in the hot loop.
@@ -144,6 +164,17 @@ class TransientSolver {
   mutable Eigen::SparseMatrix<double> workAs_;
   mutable Eigen::SparseLU<Eigen::SparseMatrix<double>> workSlu_;
   mutable SolverStats stats_;  // bookkeeping, mutated even in const solves
+  /// FNV-1a signature over every matrix-affecting input (dt, R/L/C/k,
+  /// switch states + ron/roff, diode conducting/recovery + ron/roff,
+  /// transformer ratio). Source values, histories and recovery currents
+  /// affect only z and are deliberately excluded.
+  struct MatrixSig {
+    std::uint64_t h = 0;
+    bool operator==(const MatrixSig& o) const { return h == o.h; }
+  };
+  MatrixSig matrixSig() const;
+  mutable MatrixSig cachedSig_;
+  mutable bool cacheValid_ = false;  // cleared by rebuildMaps()
 };
 
 }  // namespace power_engine

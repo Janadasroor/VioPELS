@@ -255,7 +255,12 @@ void Engine::step() {
         // Note: no zero-step skip here on purpose (an old one could spin
         // forever when the residual has no event in it); dust-scale
         // residuals solve normally below.
-        const double dtSub = tNext - tNow;
+        // Full uninterrupted frame: pass baseDt exactly. Recomputing
+        // tNext-tNow as (t+dt)-t is NOT bitwise dt in floating point
+        // (1-ulp jitter on ~0.2% of steps), which would needlessly
+        // invalidate the solver's factorization cache and jitter companions.
+        double dtSub = tNext - tNow;
+        if (tNext == tTarget && tNext == tNow + baseDt) dtSub = baseDt;
         solver_.setStep(dtSub);
         solver_.step();  // includes diode event iteration
         updateLosses(dtSub);
