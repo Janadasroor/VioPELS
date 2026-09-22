@@ -116,6 +116,29 @@ TEST(SolverCache, RefactorizesOnSwitchEvent) {
   const double vc = eng.currentSolution().probes.at("v:3");
   EXPECT_NEAR(vc, ref, 0.01);
 }
+// Refine-roadmap R1: a two-terminal device with the same non-ground node on
+// both ends stamps nothing (silent no-op). Every add* form must reject it at
+// the boundary instead of running on.
+TEST(CircuitValidation, RejectsSameNodeDevices) {
+  using power_engine::Engine;
+  Engine eng;
+  auto& c = eng.circuit();
+  EXPECT_THROW(c.addResistor("R1", 3, 3, 100.0), std::runtime_error);
+  EXPECT_THROW(c.addCapacitor("C1", 3, 3, 1e-6, 0.0), std::runtime_error);
+  EXPECT_THROW(c.addInductor("L1", 3, 3, 1e-3, 0.0), std::runtime_error);
+  EXPECT_THROW(c.addVoltageSource("V1", 3, 3, 5.0), std::runtime_error);
+  EXPECT_THROW(c.addCurrentSource("I1", 3, 3, 1.0), std::runtime_error);
+  EXPECT_THROW(c.addSwitch("S1", 3, 3), std::runtime_error);
+  EXPECT_THROW(c.addDiode("D1", 3, 3), std::runtime_error);
+  EXPECT_THROW(c.addSaturableInductor("LS1", 3, 3, 1e-3, 1e-4, 1.0), std::runtime_error);
+  EXPECT_THROW(c.addTransformer("T1", 3, 3, 4, 0, 2.0), std::runtime_error);
+  EXPECT_THROW(c.addTransformer("T1", 4, 0, 3, 3, 2.0), std::runtime_error);
+  EXPECT_THROW(c.addCoupledInductors("K1", 3, 3, 4, 0, 1e-3, 1e-3, 0.9), std::runtime_error);
+  EXPECT_THROW(c.addCoupledInductors("K1", 4, 0, 3, 3, 1e-3, 1e-3, 0.9), std::runtime_error);
+  // Both-ground stays rejected with its own message; distinct nodes still fine.
+  EXPECT_THROW(c.addResistor("R0", 0, 0, 100.0), std::runtime_error);
+  EXPECT_NO_THROW(c.addResistor("Rok", 3, 0, 100.0));
+}
 // Large floating ladder (no ground path at all): sparse path must still
 // detect singularity instead of returning garbage.
 TEST(RCLadder, SparsePathDetectsSingular) {

@@ -10,6 +10,9 @@ namespace power_engine {
 void Circuit::checkNodes(int n1, int n2) {
   if (n1 < 0 || n2 < 0) throw std::runtime_error("node ids must be >= 0");
   if (n1 == 0 && n2 == 0) throw std::runtime_error("device shorted to ground on both ends");
+  // Same non-ground node on both ends stamps nothing: the device is a silent
+  // no-op (refine-roadmap R1). Reject at the boundary instead of running on.
+  if (n1 == n2) throw std::runtime_error("device terminals must differ (same node on both ends)");
 }
 
 void Circuit::checkPositive(double v, const char* what) {
@@ -65,7 +68,6 @@ void Circuit::addInductor(const std::string& name, int n1, int n2, double l, dou
 void Circuit::addVoltageSource(const std::string& name, int np, int nm, double v) {
   checkNodes(np, nm);
   if (!std::isfinite(v)) throw std::runtime_error("V must be finite");
-  if (np == nm) throw std::runtime_error("voltage source shorted (np==nm)");
   checkNameUnique(devices_, name);
   devices_.push_back(makeDevice(DeviceType::VoltageSource, name, np, nm, v));
 }
