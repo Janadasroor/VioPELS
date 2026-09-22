@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -182,6 +183,67 @@ S2 2 0 TSW=200n
   auto b = p.parse(a.serialize());
   EXPECT_DOUBLE_EQ(b.circuit.findDevice("S1").tsw, 100e-9);
   EXPECT_NE(b.serialize().find("TSW="), std::string::npos);
+}
+
+// Refine-roadmap R3: resource guards for untrusted netlist text. Each case
+// must throw (never hang/crash); the 10s bounds are hang-guards with ~1000x
+// headroom (all complete in milliseconds after the fix).
+TEST(ParserLimits, RejectsOversizedInput) {
+  Parser p;
+  const std::string big(2u << 20, ' ');
+  const auto t0 = std::chrono::steady_clock::now();
+  EXPECT_THROW(p.parse(big + "R1 1 0 1k\nV1 1 0 1\n.end\n"), std::runtime_error);
+  EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 10.0);
+}
+
+TEST(ParserLimits, RejectsDeepExpressions) {
+  Parser p;
+  // 200-deep parens and 200-long right-assoc ^ chain both recurse via factor().
+  const std::string deep(std::string(200, '(') + "1" + std::string(200, ')'));
+  EXPECT_THROW(p.parse("R1 1 0 {" + deep + "}\nV1 1 0 1\n.end\n"), std::runtime_error);
+  std::string pow = "2";
+  for (int i = 0; i < 200; ++i) pow += "^2";
+  EXPECT_THROW(p.parse("R1 1 0 {" + pow + "}\nV1 1 0 1\n.end\n"), std::runtime_error);
+  // Shallow nesting (20) still parses exactly.
+  const std::string shallow(std::string(20, '(') + "1" + std::string(20, ')'));
+  auto r = p.parse("R1 1 0 {" + shallow + "}\nV1 1 0 1\n.end\n");
+  EXPECT_DOUBLE_EQ(r.circuit.findDevice("R1").value, 1.0);
+}
+
+TEST(ParserLimits, LongFlatExpressionStaysLinear) {
+  Parser p;
+  // 50000-term sum: iterative (no depth growth); linear lexing must keep it fast.
+  std::string expr = "{1";
+  for (int i = 1; i < 50000; ++i) expr += "+1";
+  expr += "}";
+  const auto t0 = std::chrono::steady_clock::now();
+  auto r = p.parse("R1 1 0 " + expr + "\nV1 1 0 1\n.end\n");
+  EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 10.0);
+  EXPECT_DOUBLE_EQ(r.circuit.findDevice("R1").value, 50000.0);
+}
+
+TEST(ParserLimits, RejectsSubcktBomb) {
+  Parser p;
+  // Self-recursive subckt with fan-out 3: 3^16 lines without a budget cap.
+  const auto t0 = std::chrono::steady_clock::now();
+  EXPECT_THROW(p.parse(R"(
+.subckt B 1 2
+X1 1 2 B
+X2 1 2 B
+X3 1 2 B
+R1 1 2 1k
+.ends
+V1 1 0 5
+Xtop 1 0 B
+.end
+)"),
+               std::runtime_error);
+  EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), 10.0);
+}
+
+TEST(ParserLimits, EtableMismatchThrowsWithLine) {
+  Parser p;
+  EXPECT_THROW(p.parse(".etable T1 I=1,2,3 E=1,2\nV1 1 0 1\n.end\n"), std::runtime_error);
 }
 
 // Ideal transformer: 12V primary, ratio 2:1, 10 ohm secondary load.

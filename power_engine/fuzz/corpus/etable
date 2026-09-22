@@ -1,0 +1,9 @@
+.etable EON1 I=0.5,1,2 V=100,200 E=5u,8u,12u,7u,10u,15u
+V1 1 0 12
+S1 1 2 RON=5m ROFF=1Meg EON_TABLE=EON1
+D1 0 2 VF=0.7 RON=10m
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.tran 0.5u 6m
+.end

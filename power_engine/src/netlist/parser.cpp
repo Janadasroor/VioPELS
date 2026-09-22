@@ -3,12 +3,20 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 
 namespace power_engine {
 namespace netlist {
 namespace {
+
+// Refine-roadmap R3: resource guards for untrusted netlist text. Real
+// netlists are kilobytes; these caps are orders of magnitude above any
+// legitimate input and only bite on adversarial/accidental blowups.
+constexpr std::size_t kMaxNetlistBytes = 1u << 20;  // 1 MiB total input
+constexpr int kMaxExprDepth = 64;                   // expression nesting
+constexpr std::size_t kMaxExpandedLines = 100000;   // subckt expansion
 
 // ---------- small string helpers ----------
 
@@ -109,12 +117,38 @@ class ExprLexer {
       return t;
     }
     if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
+      // Scan the numeric extent first: stod() on substr(i_) would copy the
+      // whole remaining expression per number token (quadratic on long
+      // `{1+1+...}` chains). The scan mirrors strtod shape (no sign; the
+      // lexer splits +/- as operators) so stod sees an exact-size copy.
+      std::size_t j = i_;
+      while (j < s_.size() && std::isdigit(static_cast<unsigned char>(s_[j]))) ++j;
+      if (j == i_ + 1 && s_[i_] == '0' && j + 1 < s_.size() &&
+          (s_[j] == 'x' || s_[j] == 'X') &&
+          std::isxdigit(static_cast<unsigned char>(s_[j + 1]))) {
+        // Hex float prefix (stod/strtod accept it; keep behavior identical).
+        j += 2;
+        while (j < s_.size() && std::isxdigit(static_cast<unsigned char>(s_[j]))) ++j;
+      } else {
+        if (j < s_.size() && s_[j] == '.') {
+          ++j;
+          while (j < s_.size() && std::isdigit(static_cast<unsigned char>(s_[j]))) ++j;
+        }
+        if (j < s_.size() && (s_[j] == 'e' || s_[j] == 'E')) {
+          std::size_t k = j + 1;
+          if (k < s_.size() && (s_[k] == '+' || s_[k] == '-')) ++k;
+          if (k < s_.size() && std::isdigit(static_cast<unsigned char>(s_[k]))) {
+            j = k + 1;
+            while (j < s_.size() && std::isdigit(static_cast<unsigned char>(s_[j]))) ++j;
+          }
+        }
+      }
       std::size_t len = 0;
       double v = 0.0;
       try {
-        v = std::stod(s_.substr(i_), &len);
+        v = std::stod(s_.substr(i_, j - i_), &len);
       } catch (...) {
-        throw std::runtime_error("bad number in expression near '" + s_.substr(i_) + "'");
+        throw std::runtime_error("bad number in expression near '" + s_.substr(i_, j - i_) + "'");
       }
       i_ += len;
       v *= suffixScale(s_, i_);
@@ -155,6 +189,18 @@ class ExprParser {
 
  private:
   void eat() { cur_ = lex_.next(); }
+  // Depth guard: unary +/- , right-assoc ^ and parens all recurse through
+  // factor(). Iterative chains (1+1+..., 1*1*...) loop in expr()/term() and
+  // never accumulate depth. RAII restores on all return paths; a throw
+  // aborts the whole parse anyway.
+  struct DepthGuard {
+    int& d;
+    explicit DepthGuard(int& d) : d(d) {
+      if (++d > kMaxExprDepth)
+        throw std::runtime_error("expression nesting too deep (limit 64)");
+    }
+    ~DepthGuard() { --d; }
+  };
   double expr() {
     double v = term();
     while (cur_.kind == ExprTok::Op && (cur_.text == "+" || cur_.text == "-")) {
@@ -176,6 +222,7 @@ class ExprParser {
     return v;
   }
   double factor() {
+    DepthGuard g(depth_);
     if (cur_.kind == ExprTok::Op && (cur_.text == "-" || cur_.text == "+")) {
       std::string op = cur_.text;
       eat();
@@ -216,6 +263,7 @@ class ExprParser {
   ExprLexer lex_;
   const std::map<std::string, double>& params_;
   ExprTok cur_;
+  int depth_ = 0;
 };
 
 double evalRaw(const std::string& s, const std::map<std::string, double>& params) {
@@ -249,6 +297,11 @@ struct Elaborator {
   std::map<std::string, int> portBind;           // upper(port) -> node id (inside subckt)
   std::string lastSwitchOrDiode;                 // for bare .thermal
   int depth = 0;
+  // Shared subckt-expansion budget: X-instantiation multiplies body lines
+  // (self-recursive subckts fan out exponentially until the depth cap).
+  // Counts every elaborated line across all scopes; shared_ptr so child
+  // Elaborators draw from the same budget.
+  std::shared_ptr<std::size_t> expanded;
 
   int nodeId(const std::string& tok, int line) {
     const std::string up = upper(tok);
@@ -551,7 +604,8 @@ struct Elaborator {
                          std::to_string(pos.size() - 1));
         }
         Elaborator child{out, subckts, params, locked, nodeIds, nextNode,
-                         prefix + toks[0] + ":", {}, lastSwitchOrDiode, depth + 1};
+                          prefix + toks[0] + ":", {}, lastSwitchOrDiode, depth + 1,
+                          expanded};
         // Copy shared node table so sibling scopes stay consistent.
         child.nodeIds = nodeIds;
         child.nextNode = nextNode;
@@ -784,6 +838,8 @@ struct Elaborator {
   std::string ScopedNameFix(const std::string& n) const { return prefix + n; }
 
   void processLine(const std::string& text, int line) {
+    if (++(*expanded) > kMaxExpandedLines)
+      fail(line, "netlist expansion too large (subckt fan-out limit 100000 lines)");
     const auto toks = split(text);
     if (toks.empty()) return;
     if (!toks[0].empty() && toks[0][0] == '.') {
@@ -803,6 +859,8 @@ double evalExpression(const std::string& expr,
 
 NetlistResult Parser::parse(const std::string& text,
                              const std::map<std::string, double>& overrides) const {
+  if (text.size() > kMaxNetlistBytes)
+    throw std::runtime_error("netlist input exceeds 1 MiB limit");
   // 1. Split into logical lines (continuation with leading '+').
   struct L {
     int no = 0;
@@ -884,7 +942,8 @@ NetlistResult Parser::parse(const std::string& text,
     params[upper(k)] = v;
     lockedUpper[upper(k)] = v;
   }
-  Elaborator el{out, subckts, params, lockedUpper, {}, 1, "", {}, "", 0};
+  Elaborator el{out, subckts, params, lockedUpper, {}, 1, "", {}, "", 0,
+                  std::make_shared<std::size_t>(0)};
   for (const auto& t : top) el.processLine(t.text, t.no);
   out.params = params;
 

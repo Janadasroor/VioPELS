@@ -104,6 +104,9 @@ class Parser {
   /// Parse + elaborate. `overrides` (UPPER-name -> value) pre-seed the
   /// parameter table and win over in-file `.param` lines (used by
   /// Engine::setParameter for exact re-elaboration).
+  /// Resource guards (refine-roadmap R3): inputs over 1 MiB, `{...}`
+  /// expressions nested deeper than 64, and subckt expansions beyond
+  /// 100000 lines throw std::runtime_error.
   NetlistResult parse(const std::string& text,
                       const std::map<std::string, double>& overrides = {}) const;
 };

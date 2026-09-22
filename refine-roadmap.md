@@ -94,10 +94,16 @@ Gaps found (the refinement backlog §C):
   across repeats. New `SweepThreads.WindowedMeanThreadSafe` proves csv()
   equality jobs 1/4/0 for the callback pattern; stale NOTE corrected.
   24/24 green.
-- [ ] **R3. Parser hardening**: input byte cap + nesting-depth accounting
-  for expressions, pre-allocation sanity on `.etable` grids; fuzzer dict
-  extension (`.subckt`, deep parens). Tests: oversized/deep inputs throw
-  fast (assert wall-time bound), corpus still clean.
+- [x] **R3. Parser hardening** (DONE 2026-09-22): 1 MiB input cap,
+  expression nesting cap (64, RAII depth guard on `factor()` — covers parens,
+  unary chains, right-assoc `^`), 100k-line subckt-expansion budget (shared
+  across child Elaborators), exact-extent number lexing (fixes O(n²) tail
+  copy on long `{1+1+...}` chains; hex-int behavior preserved). 5 new
+  `ParserLimits` tests (oversize/deep-parens/deep-pow/shallow-exact/
+  50k-term-linear/subckt-bomb/etable-mismatch, all ms with 10s hang-guards);
+  new `fuzz/corpus/{expr,etable}` seeds verified parse+serialize round-trip.
+  Etable product cap dropped: subsumed by the input cap (values text bounds
+  the grid). 24/24 green.
 - [ ] **R4. Diode-iteration observability**: `SolverStats` chatter counter
   (iterations-hit-cap events) + `bench/BASELINE.md` entry; no behavior
   change. Later: consider escalating chronic saturation to BDF2 hint.
