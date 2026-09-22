@@ -1,7 +1,10 @@
 #pragma once
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "power_engine/control.h"
 
 namespace power_engine {
 namespace machine {
@@ -52,10 +55,62 @@ ThreePhase pmsmEmf(double theta, double omega, const PmsmParams& m);
 /// ia = I*sin(thE) (and b/c at -/+120deg), id = 0 and iq = +I.
 void park(double ia, double ib, double ic, double thE, double& id, double& iq);
 
+/// Inverse Park (same sine convention): v_k = vd*cos(thE+off_k) +
+/// vq*sin(thE+off_k) with off = 0/-120/+120deg. Exact inverse of park()
+/// for balanced quantities: park(inversePark(vd, vq)) == (vd, vq).
+/// Throws on non-finite input.
+ThreePhase inversePark(double vd, double vq, double thE);
+
 /// Electromagnetic torque [N m] from dq currents (exact for sinusoidal
 /// machines, no speed singularity): Te = 3/2*p*(lambdaPm*iq +
 /// (ld-lq)*id*iq). For surface PMSM with id = 0: Te = 3/2*p*lambdaPm*iq.
 double pmsmTorque(double id, double iq, const PmsmParams& m);
+
+/// Voltage-form field-oriented controller (item 19): cascaded loops
+/// (speed PI -> iq*, dq current PIs + decoupling feedforward -> vd/vq),
+/// id* = 0, carrier-PWM gate output (lo = !hi). Current gains derive from
+/// the motor (crossover target); speed gains default to the validated
+/// reference-motor values. Conditional-integration anti-windup on all
+/// PIs; voltage magnitude clamped preserving angle. Shares plant
+/// histories: safe to retune mid-run.
+struct FocParams {
+  PmsmParams motor;
+  double vdc = 24.0;
+  double carrierFreq = 20e3;
+  double speedKp = 0.0067;
+  double speedKi = 0.22;
+  double speedMaxIq = 2.0;  ///< iq* clamp [A], motoring only
+  double currentBandwidthHz = 1500.0;
+  double voltMargin = 0.95;  ///< magnitude clamp as fraction of Vdc/2
+};
+class FocController {
+ public:
+  FocController();
+  explicit FocController(const FocParams& p);
+
+  struct Gates {
+    bool aHi = false, bHi = false, cHi = false;
+  };
+  /// One tick: wRef/w [rad/s], accelFF [rad/s^2] (velocity feedforward),
+  /// i phase currents, thE electrical angle [rad], dt [s].
+  Gates update(double t, double wRef, double accelFF, double w, const ThreePhase& i,
+               double thE, double dt);
+  double id() const { return id_; }
+  double iq() const { return iq_; }
+  double iqRef() const { return iqRef_; }
+  double vd() const { return vd_; }
+  double vq() const { return vq_; }
+  ThreePhase duties() const { return duties_; }
+
+ private:
+  FocParams p_;
+  control::PiController speedPi_;
+  control::PiController pid_;
+  control::PiController piq_;
+  std::array<control::Pwm, 3> pwm_;
+  double id_ = 0.0, iq_ = 0.0, iqRef_ = 0.0, vd_ = 0.0, vq_ = 0.0;
+  ThreePhase duties_;
+};
 
 /// Squirrel-cage induction machine (dq synchronous frame, SI).
 struct InductionParams {

@@ -67,6 +67,17 @@ void park(double ia, double ib, double ic, double thE, double& id, double& iq) {
         ic * std::sin(thE + 2.0 * kPi / 3.0));
 }
 
+ThreePhase inversePark(double vd, double vq, double thE) {
+  if (!std::isfinite(vd) || !std::isfinite(vq) || !std::isfinite(thE)) {
+    throw std::runtime_error("Inverse Park inputs must be finite");
+  }
+  ThreePhase v;
+  v.a = vd * std::cos(thE) + vq * std::sin(thE);
+  v.b = vd * std::cos(thE - 2.0 * kPi / 3.0) + vq * std::sin(thE - 2.0 * kPi / 3.0);
+  v.c = vd * std::cos(thE + 2.0 * kPi / 3.0) + vq * std::sin(thE + 2.0 * kPi / 3.0);
+  return v;
+}
+
 double pmsmTorque(double id, double iq, const PmsmParams& m) {
   if (!std::isfinite(id) || !std::isfinite(iq)) {
     throw std::runtime_error("PMSM torque inputs must be finite");
@@ -171,6 +182,52 @@ double inductionSteadyTorque(const InductionParams& m, double vPhaseRms,
   const std::complex<double> is = vPhaseRms / zin;
   const std::complex<double> i2 = is * zm / (zm + zr);
   return 3.0 * std::norm(i2) * (m.rr / slip) * (m.polePairs / we);
+}
+
+FocController::FocController() : FocController(FocParams{}) {}
+
+FocController::FocController(const FocParams& p)
+    : p_(p),
+      speedPi_(p.speedKp, p.speedKi, 0.0, p.speedMaxIq),
+      pid_(2.0 * kPi * p.currentBandwidthHz * p.motor.ld,
+           2.0 * kPi * p.currentBandwidthHz * p.motor.ld * p.motor.rs / p.motor.ld,
+           -p.vdc / 2.0, p.vdc / 2.0),
+      piq_(2.0 * kPi * p.currentBandwidthHz * p.motor.lq,
+           2.0 * kPi * p.currentBandwidthHz * p.motor.lq * p.motor.rs / p.motor.lq,
+           -p.vdc / 2.0, p.vdc / 2.0),
+      pwm_{control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric),
+           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric),
+           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric)} {}
+
+FocController::Gates FocController::update(double t, double wRef, double accelFF, double w,
+                                           const ThreePhase& i, double thE, double dt) {
+  park(i.a, i.b, i.c, thE, id_, iq_);
+  const double kTq = 1.5 * p_.motor.polePairs * p_.motor.lambdaPm;
+  iqRef_ = std::min(std::max(speedPi_.update(wRef - w, dt) +
+                                 (p_.motor.mech.j * accelFF + p_.motor.mech.b * wRef) / kTq,
+                             0.0),
+                    p_.speedMaxIq);
+  const double we = p_.motor.polePairs * w;
+  double vd = pid_.update(0.0 - id_, dt) - we * p_.motor.lq * iq_;
+  double vq = piq_.update(iqRef_ - iq_, dt) + we * (p_.motor.ld * id_ + p_.motor.lambdaPm);
+  // Preserve angle under the linear-modulation ceiling.
+  const double vmax = p_.voltMargin * p_.vdc / 2.0;
+  const double m = std::hypot(vd, vq);
+  if (m > vmax && m > 0.0) {
+    vd *= vmax / m;
+    vq *= vmax / m;
+  }
+  vd_ = vd;
+  vq_ = vq;
+  const ThreePhase v = inversePark(vd, vq, thE);
+  const double half = p_.vdc / 2.0;
+  duties_.a = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.a / half)));
+  duties_.b = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.b / half)));
+  duties_.c = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.c / half)));
+  pwm_[0].setDuty(duties_.a);
+  pwm_[1].setDuty(duties_.b);
+  pwm_[2].setDuty(duties_.c);
+  return {pwm_[0].output(t), pwm_[1].output(t), pwm_[2].output(t)};
 }
 
 }  // namespace machine

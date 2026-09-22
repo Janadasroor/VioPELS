@@ -475,6 +475,13 @@ double HalfBridgeDriver::nextEdge(double t) const {
 
 // ---------------- Svpwm ----------------
 
+AlphaBeta clarke(double a, double b, double c) {
+  if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+    throw std::runtime_error("Clarke inputs must be finite");
+  }
+  return {(2.0 / 3.0) * (a - 0.5 * b - 0.5 * c), (b - c) / std::sqrt(3.0)};
+}
+
 Svpwm::Svpwm(double freq) {
   if (!(freq > 0.0) || !std::isfinite(freq)) {
     throw std::runtime_error("svpwm freq must be positive");

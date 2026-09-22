@@ -198,6 +198,18 @@ class HalfBridgeDriver {
   double phase_ = 0.0;
 };
 
+/// Alpha-beta (stationary two-phase) quantity.
+struct AlphaBeta {
+  double alpha = 0.0;
+  double beta = 0.0;
+};
+
+/// Amplitude-invariant Clarke transform: alpha = 2/3*(a-b/2-c/2),
+/// beta = (b-c)/sqrt(3). Gain-matched to Svpwm (inputs normalized by
+/// Vdc/2) and to machine::park (same 2/3 convention). Throws on
+/// non-finite input.
+AlphaBeta clarke(double a, double b, double c);
+
 /// Space-vector PWM for 3-phase inverters. Alpha-beta voltage reference
 /// normalized to Vdc/2 (|u| <= 2/sqrt(3) is the linear region); outputs the
 /// sector + dwell times for one switching period plus the symmetric

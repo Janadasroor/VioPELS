@@ -472,3 +472,19 @@ TEST(SvpwmThreePhase, WaveformsCorrect) {
   EXPECT_NEAR(std::abs(wrap180(pB.phaseDeg - 120.0 - pA.phaseDeg)), 120.0, 5.0);
   EXPECT_NEAR(std::abs(wrap180(pC.phaseDeg + 120.0 - pA.phaseDeg)), 120.0, 5.0);
 }
+
+TEST(Clarke, BalancedSineMapsToRotatingVector) {
+  // a = sin(wt): alpha = sin(wt), beta = -cos(wt) (amplitude-invariant).
+  const auto q0 = power_engine::control::clarke(0.0, -0.8660254037844386, 0.8660254037844386);
+  EXPECT_NEAR(q0.alpha, 0.0, 1e-12);
+  EXPECT_NEAR(q0.beta, -1.0, 1e-12);
+  const auto q1 = power_engine::control::clarke(1.0, -0.5, -0.5);
+  EXPECT_NEAR(q1.alpha, 1.0, 1e-12);
+  EXPECT_NEAR(q1.beta, 0.0, 1e-12);
+  // Zero sequence is rejected: (1,1,1) -> (0,0).
+  const auto qz = power_engine::control::clarke(1.0, 1.0, 1.0);
+  EXPECT_NEAR(qz.alpha, 0.0, 1e-12);
+  EXPECT_NEAR(qz.beta, 0.0, 1e-12);
+  EXPECT_THROW(power_engine::control::clarke(0.0, std::numeric_limits<double>::quiet_NaN(), 0.0),
+               std::runtime_error);
+}

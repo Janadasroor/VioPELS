@@ -134,6 +134,9 @@
   sources (value-only drive) + Park transform + power-balance torque
   (exact, no speed singularity), co-simulated per electrical step
   (timescale-separated explicit coupling, same philosophy as thermal).
+  Voltage-form FOC: Clarke (control.h) + inverse Park + FocController
+  (speed PI/FF -> iq*, dq PIs + decoupling, id* = 0, carrier PWM);
+  ideal theta (no encoder/observer).
   Hysteretic id=0 drive (self-commutated by construction) with speed PI +
   velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
   be designed against the real loop (sluggish ki fails load recovery,
