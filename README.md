@@ -6,24 +6,34 @@
 Headless C++20 system-level power-electronics engine.
 
 ## Scope
-- Circuit: R, L, C, V/I sources, ideal Switch (Ron/Roff, Eon/Eoff, tail),
-  ideal Diode (Vf, Ron/Roff, Qrr recovery), ideal Transformer (ratio),
-  coupled inductors (M/k), saturable inductor (tanh λ(i), Newton),
-  ground `0`
-- Fixed-step trapezoidal MNA solver (opt-in adaptive step-doubling);
-  matrices re-assembled every step; diodes iterate in-step with hysteresis;
-  exact-time gate edges via sub-stepping; dense PartialPivLU / SparseLU
-  auto-selection at 64 rows
-- Netlist: SPICE-like with SI suffixes, `{expressions}`, `.param`, `.model`,
-  `.tran`, `.control pwm`, `.thermal`, `.subckt`/X, `W`/`Y` magnetics
+- Circuit: R, L, C, V/I sources, ideal Switch (Ron/Roff, Eon/Eoff, tail,
+  slew-limited `tsw` transitions), ideal Diode (Vf, Ron/Roff, Qrr
+  recovery), ideal Transformer (ratio), coupled inductors (M/k),
+  saturable inductor (tanh λ(i), Newton), hysteresis core, nodal
+  reluctance network + windings, ground `0`
+- Solver: fixed-step trapezoidal MNA (opt-in step-doubling adaptive;
+  opt-in TR-BDF2 stiff integrator with auto switching + embedded error
+  control); factorization caching; exact-time gate edges via sub-stepping;
+  dense PartialPivLU / SparseLU auto-selection at 64 rows
+- Netlist: SPICE-like with SI suffixes, `{expressions}`, `.param`,
+  `.model`, `.tran [TRAP|TRBDF2|AUTO]`, `.control pwm`, `.thermal`,
+  `.subckt`/X, `W`/`Y` magnetics
 - Control: PWM (trailing/symmetric, deadtime pair), PI + anti-windup,
-  hysteretic comparator, Tustin transfer functions
+  hysteretic comparator, SVPWM, state machine, half-bridge driver,
+  Tustin transfer functions
 - Electro-thermal: conduction (exact v·i) + switching (Eon/Eoff, Qrr·Vr)
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
-- Validated converters: buck (CCM/DCM, open/closed-loop, sync), boost,
-  flyback; 152 tests, 24 binaries, zero warnings
-- AC analysis: Fourier-meter Bode (RC + buck Gvd), `ac_demo` CSV
-- Steady-state shooting: periodic orbits without startup transient
+- Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
+  full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
+  DAB, LLC, PMSM, induction; 152 tests, 24 binaries, zero warnings
+- Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
+  state-space export, shooting steady-state, THD/ripple toolkit,
+  grid×netlist sweep (threaded) + Monte Carlo tolerance analysis
+- Magnetics & EMI: hysteresis core + eddy loss, reluctance networks,
+  conducted-EMI screening (DC LISN + CISPR 32 Class B)
+- Interop: installable CMake package (`find_package` smoke-tested),
+  FMI 2.0 co-simulation export (XSD-validated), ngspice
+  cross-validation harness (agreement 5e-4..1.5e-3)
 
 ## Build
 ```sh
@@ -41,8 +51,10 @@ cmake -B build-san -DCMAKE_BUILD_TYPE=Debug -DPOWER_ENGINE_SANITIZE=address,unde
 cmake --build build-san && ctest --test-dir build-san --output-on-failure
 ```
 
-CI (`.github/workflows/ci.yml`): Release matrix over
-Ubuntu/Windows/macOS × gcc/clang/MSVC plus an ASan+UBSan job — all green.
+CI (`.github/workflows/ci.yml`, 11 jobs): Release matrix over
+Ubuntu/Windows/macOS × gcc/clang/MSVC plus ASan+UBSan, Ninja,
+install-smoke, ngspice cross-validation, fuzz corpus, and FMI
+pack+check jobs — all green.
 
 ## Cross-validation vs ngspice + benchmark
 
@@ -84,5 +96,8 @@ Rload 3 0 5
 ```
 
 ## Layout
-See `power_engine/` for `include/`, `src/{core,solver,api,netlist,control,thermal}/`,
-`tests/`, `examples/`. Details in `power_engine/ARCHITECTURE.md`.
+See `power_engine/` for `include/`, `src/` (one dir per domain),
+`tests/`, `examples/`, plus `bench/` (benchmark harness + baselines),
+`xval/` (ngspice cross-validation), `fuzz/` (libFuzzer target + corpus),
+`fmi/` (FMI 2.0 export: wrapper, packager, schemas), `coverage/`
+(gcov script). Details in `power_engine/ARCHITECTURE.md`.
