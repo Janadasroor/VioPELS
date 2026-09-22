@@ -1,6 +1,5 @@
 #include <cstdio>
 #include <map>
-#include <memory>
 #include <string>
 
 #include "power_engine/engine.h"
@@ -21,27 +20,32 @@ Rload 3 0 {RLOAD}
 .control pwm switch=S1 freq=20k duty=0.5
 .end
 )";
+  // Per-point windowed-mean state. runPoint() executes setup -> run ->
+  // measure atomically on one worker thread, so thread-local storage is
+  // race-free for any job count (a single shared accumulator across points
+  // would be a data race with jobs != 1; see sweep.h parallelism contract).
   struct Acc {
     double sum = 0.0, n = 0.0;
   };
-  auto acc = std::make_shared<Acc>();
+  thread_local Acc acc;
   power_engine::sweep::SweepConfig cfg;
   cfg.netlist = netlist;
   cfg.axes = {{"RLOAD", {2.5, 5.0, 10.0, 20.0}}};
-  cfg.setup = [acc](power_engine::Engine& eng, const std::map<std::string, double>&) {
-    acc->sum = 0.0;
-    acc->n = 0.0;
+  cfg.jobs = 0;  // threaded live proof: csv() is bitwise-identical either way
+  cfg.setup = [](power_engine::Engine& eng, const std::map<std::string, double>&) {
+    acc.sum = 0.0;
+    acc.n = 0.0;
     eng.applyPwmSpecs();
-    eng.setCallback([acc](const power_engine::Solution& s) {
+    eng.setCallback([](const power_engine::Solution& s) {
       if (s.t > 5e-3) {
-        acc->sum += s.probes.at("v:3");
-        acc->n += 1.0;
+        acc.sum += s.probes.at("v:3");
+        acc.n += 1.0;
       }
     });
   };
-  cfg.measure = [acc](power_engine::Engine& eng, const std::map<std::string, double>&) {
+  cfg.measure = [](power_engine::Engine& eng, const std::map<std::string, double>&) {
     return std::map<std::string, double>{
-        {"vout", acc->sum / acc->n},
+        {"vout", acc.sum / acc.n},
         {"esw", eng.deviceLoss("S1").esw},
         {"econd", eng.deviceLoss("S1").econd + eng.deviceLoss("D1").econd}};
   };

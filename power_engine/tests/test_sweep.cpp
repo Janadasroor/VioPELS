@@ -69,9 +69,11 @@ TEST(SweepGrid, ProductOrderAndErrors) {
 }
 
 // --- Threaded sweep: bitwise-identical tables, error parity, speedup.
-// NOTE: threaded points must use stateless setup/measure (no shared
-// mutable accumulator across points — that pattern is a data race with
-// jobs>1; the efficiency test above stays serial for that reason).
+// NOTE: with jobs>1, setup/measure must not share one mutable accumulator
+// across points (data race). Keep per-point state in thread-local storage
+// (runPoint runs setup -> run -> measure atomically on one worker; see
+// WindowedMeanThreadSafe) or recompute in measure. SweepEfficiency below
+// stays serial for that reason.
 namespace {
 
 SweepConfig buckGrid() {
@@ -117,6 +119,45 @@ TEST(SweepThreads, BitwiseIdenticalCsv) {
   EXPECT_EQ(runSweep(autoJobs).csv(), ref);
   EXPECT_THROW({ SweepConfig bad = buckGrid(); bad.jobs = -1; runSweep(bad); },
                std::runtime_error);
+}
+
+// Refine-roadmap R2: the windowed-mean callback pattern (setup installs a
+// SolutionCallback, measure reads the accumulation) must be safe with
+// jobs != 1. Thread-local per-point state keeps it race-free: runPoint()
+// executes setup -> run -> measure atomically on one worker thread.
+TEST(SweepThreads, WindowedMeanThreadSafe) {
+  struct Acc {
+    double sum = 0.0, n = 0.0;
+  };
+  thread_local Acc acc;
+  auto windowed = [] {
+    SweepConfig cfg = buckGrid();
+    cfg.setup = [](Engine& eng, const std::map<std::string, double>&) {
+      acc.sum = 0.0;
+      acc.n = 0.0;
+      eng.applyPwmSpecs();
+      eng.setCallback([](const power_engine::Solution& s) {
+        if (s.t > 5e-3) {
+          acc.sum += s.probes.at("v:3");
+          acc.n += 1.0;
+        }
+      });
+    };
+    cfg.measure = [](Engine&, const std::map<std::string, double>&) {
+      return std::map<std::string, double>{{"vout", acc.sum / acc.n}};
+    };
+    return cfg;
+  };
+  SweepConfig serial = windowed();
+  serial.jobs = 1;
+  const std::string ref = runSweep(serial).csv();
+  EXPECT_NE(ref.find("vout"), std::string::npos);
+  SweepConfig par = windowed();
+  par.jobs = 4;
+  EXPECT_EQ(runSweep(par).csv(), ref);
+  SweepConfig autoJobs = windowed();
+  autoJobs.jobs = 0;
+  EXPECT_EQ(runSweep(autoJobs).csv(), ref);
 }
 
 TEST(SweepThreads, ErrorRowsMatch) {

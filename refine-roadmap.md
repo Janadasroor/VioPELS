@@ -87,9 +87,13 @@ Gaps found (the refinement backlog §C):
   transformer/coupled windings (single choke point); redundant V-source
   `np==nm` check removed (subsumed); `CircuitValidation.RejectsSameNodeDevices`
   covers all 10 add-forms; 24/24 green, all demos exit 0.
-- [ ] **R2. Make `sweep_demo` thread-safe**: thread-local accumulator or
-  mutex, run the demo grid at `jobs=0` in a test proving `csv()` equality
-  with `jobs==1`. Docs: keep the `sweep.h:50-53` contract, fix the example.
+- [x] **R2. Thread-safe sweep template** (DONE 2026-09-22): `sweep_demo.cpp`
+  shared-`Acc` replaced with `thread_local` per-point state (runPoint runs
+  setup→run→measure atomically on one worker) + demo now runs `jobs=0` as a
+  live threaded proof; threaded output byte-identical to the serial baseline
+  across repeats. New `SweepThreads.WindowedMeanThreadSafe` proves csv()
+  equality jobs 1/4/0 for the callback pattern; stale NOTE corrected.
+  24/24 green.
 - [ ] **R3. Parser hardening**: input byte cap + nesting-depth accounting
   for expressions, pre-allocation sanity on `.etable` grids; fuzzer dict
   extension (`.subckt`, deep parens). Tests: oversized/deep inputs throw
