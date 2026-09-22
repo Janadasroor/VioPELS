@@ -10,7 +10,17 @@
 - `src/solver/solver.cpp`: MNA assembly + trapezoidal companions:
   - C: `G=2C/dt`, `Ihist=-G*Vprev-Iprev`
   - L: `G=dt/2L`, `Ihist=Iprev+G*Vprev`
-  - Switch: resistor `closed ? Ron : Roff`; diode conducting: Norton
+  - Switch: resistor `closed ? Ron : Roff` (ideal), or a slew-limited
+    geometric sweep over `tsw` after a gate toggle (PAT-style behavioral
+    edge: constant ratio per step; linear-in-R would jump decades on step
+    one and re-excite the ringing). Transition starts in the toggle step
+    itself (frac = 0, no ideal-commutation violence first); mid-ramp
+    retoggles restart from the present R; turn-off tails start at ramp
+    completion. Ramp v*i books into conduction loss exactly — never
+    combine with Eon/Eoff tables on the same edge. `tsw` in addSwitch +
+    netlist `TSW=` (direct/MODEL, round-trips). Matrix signature covers
+    the ramp state (transT/From/To); snapshot/restore carries it.
+    Diode conducting: Norton
     `G=1/Ron || Isrc=G*Vf` (so `Vd=Vf+I*Ron`); blocking: `Roff`.
     Factorization caching (14b): the MNA matrix depends only on the
     topology signature (switch/diode states incl. diode-recovery-active,

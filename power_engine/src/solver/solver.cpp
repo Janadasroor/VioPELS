@@ -166,7 +166,12 @@ void TransientSolver::initialize() {
     d.recT = 0.0;
     d.recI = 0.0;
     d.recE = 0.0;
-    if (d.type == DeviceType::Switch) d.closedPrev = d.closed;
+    if (d.type == DeviceType::Switch) {
+      d.closedPrev = d.closed;
+      d.transT = 0.0;
+      d.transFrom = 0.0;
+      d.transTo = 0.0;
+    }
   }
 }
 
@@ -186,6 +191,21 @@ static inline void stampI(Eigen::VectorXd& z, int r1, int r2, double i12) {
   if (r2 >= 0) z(r2) += i12;
 }
 
+// Effective switch resistance: steady Ron/Roff, or the geometric-ramp
+// value while a slew-limited transition is in flight: R(t) sweeps decades
+// at a constant ratio per step (linear-in-R would jump 1000x on the first
+// step of a turn-off and re-excite the very ringing the ramp removes).
+// Single definition shared by assemble() and updateHistories().
+static inline double switchResistance(const Device& d) {
+  if (d.tsw > 0.0 && d.transT > 0.0 && d.transFrom != d.transTo && d.transFrom > 0.0 &&
+      d.transTo > 0.0) {
+    const double frac = 1.0 - d.transT / d.tsw;  // 0 at toggle -> 1 at end
+    return d.transFrom * std::pow(d.transTo / d.transFrom, frac);
+  }
+  if (d.tsw > 0.0 && d.transT > 0.0) return d.transTo;  // degenerate: snap
+  return d.closed ? d.ron : d.roff;
+}
+
 // Recovery/tail branch current in reference direction (n1->n2) at the
 // current recovery timer value. Diode: triangular Irr*(recT/trr) with
 // recI = -Irr. Switch: exponential tail recI*exp(-elapsed/ttail).
@@ -203,6 +223,22 @@ void TransientSolver::assemble(bool withMatrix) const {
   Eigen::VectorXd& z = workZ_;
   if (withMatrix) A.setZero();
   z.setZero();
+  // Slew-transition start (idempotent within a step): a gate toggle with
+  // tsw>0 begins the ramp HERE so the toggle step itself already solves
+  // with frac = 0 (old steady R) instead of a full ideal commutation.
+  // Starting at commit would let all the violence happen first and defeat
+  // the ramp. Skipped when already started (diode-iteration re-assembles).
+  for (auto& d : circuit_.mutableDevices()) {
+    if (d.type != DeviceType::Switch || d.tsw <= 0.0) continue;
+    const bool rose = !d.closedPrev && d.closed;
+    const bool fell = d.closedPrev && !d.closed;
+    if (!(rose || fell)) continue;
+    const double target = d.closed ? d.ron : d.roff;
+    if (d.transT > 0.0 && d.transTo == target) continue;
+    d.transFrom = (d.transT > 0.0) ? switchResistance(d) : (d.closedPrev ? d.ron : d.roff);
+    d.transTo = target;
+    d.transT = d.tsw;
+  }
 
   // KCL coupling for a branch current flowing r1->r2 through extra row r.
   auto stampBranch = [&](int r1, int r2, Eigen::Index r) {
@@ -256,13 +292,10 @@ void TransientSolver::assemble(bool withMatrix) const {
         break;
       }
       case DeviceType::Switch: {
-        // Ideal switch as Ron/Roff (+ parallel tail source while recovering).
-        if (d.closed) {
-          if (withMatrix) stampG(A, r1, r2, 1.0 / d.ron);
-        } else {
-          if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
-          if (d.recT > 0.0) stampI(z, r1, r2, recoveryCurrent(d));
-        }
+        // Ideal switch as Ron/Roff, slew ramp while transitioning
+        // (+ parallel tail source while recovering).
+        if (withMatrix) stampG(A, r1, r2, 1.0 / switchResistance(d));
+        if (d.recT > 0.0 && !d.closed) stampI(z, r1, r2, recoveryCurrent(d));
         break;
       }
       case DeviceType::Diode: {
@@ -456,6 +489,11 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
         hashWord(h, d.closed ? 1ULL : 0ULL);
         hashWord(h, dblBits(d.ron));
         hashWord(h, dblBits(d.roff));
+        // In-flight ramp: resistance varies every step (transT counts
+        // down; endpoints fixed per transition — all hashed).
+        hashWord(h, dblBits(d.transT));
+        hashWord(h, dblBits(d.transFrom));
+        hashWord(h, dblBits(d.transTo));
         break;
       case DeviceType::Diode:
         // Recovery (recT>0) replaces the Norton shunt with an impressed
@@ -577,14 +615,29 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
         break;
       }
       case DeviceType::Switch: {
-        const double r = d.closed ? d.ron : d.roff;
-        // Branch current from the pre-update recovery state (matches the
-        // historical evaluation order bit-for-bit on the trap path).
+        // Branch current from the pre-update resistance/recovery state
+        // (matches the historical evaluation order bit-for-bit when idle).
+        const double rNow = switchResistance(d);
         const double iNew =
-            vNew / r + ((d.recT > 0.0 && !d.closed) ? recoveryCurrent(d) : 0.0);
+            vNew / rNow + ((d.recT > 0.0 && !d.closed) ? recoveryCurrent(d) : 0.0);
         if (!mid) {
           const double iBefore = d.i_prev;
           const bool fell = d.closedPrev && !d.closed;
+          // Toggle-start lives in assemble() (the toggle step must already
+          // solve pre-toggle); here only countdown, completion, and tail.
+          if (d.transT > 0.0) {
+            // In transition (either gate state): countdown only. A
+            // turn-off tail (if any) starts at completion (post voltage
+            // rise), not at the edge.
+            d.transT -= dt_;
+            if (d.transT <= 0.0) {
+              d.transT = 0.0;
+              if (!d.closed && d.ttail > 0.0 && d.tailk > 0.0 && iBefore != 0.0) {
+                d.recT = 5.0 * d.ttail;
+                d.recI = d.tailk * iBefore;
+              }
+            }
+          }
           if (d.closed) {
             d.recT = 0.0;  // re-closing cancels any tail
             d.recI = 0.0;
@@ -594,7 +647,8 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
               d.recT = 0.0;
               d.recI = 0.0;
             }
-          } else if (fell && d.ttail > 0.0 && d.tailk > 0.0 && iBefore != 0.0) {
+          } else if (fell && d.tsw == 0.0 && d.ttail > 0.0 && d.tailk > 0.0 &&
+                     iBefore != 0.0) {
             d.recT = 5.0 * d.ttail;
             d.recI = d.tailk * iBefore;
           }
@@ -711,6 +765,7 @@ struct TransientSolver::Snapshot {
     double flux = 0.0, ik = 0.0;
     double recT = 0.0, recI = 0.0, recE = 0.0;
     bool closedPrev = false;
+    double transT = 0.0, transFrom = 0.0, transTo = 0.0;
   };
   std::vector<Dev> devs;
 };
@@ -724,7 +779,8 @@ TransientSolver::Snapshot TransientSolver::snapshot() const {
   s.devs.reserve(devs.size());
   for (const auto& d : devs) {
     s.devs.push_back({d.v_prev, d.i_prev, d.v2_prev, d.i2_prev, d.conducting, d.flux,
-                      d.newton_ik, d.recT, d.recI, d.recE, d.closedPrev});
+                      d.newton_ik, d.recT, d.recI, d.recE, d.closedPrev, d.transT,
+                      d.transFrom, d.transTo});
   }
   return s;
 }
@@ -746,6 +802,9 @@ void TransientSolver::restore(const Snapshot& s) {
     devs[i].recI = s.devs[i].recI;
     devs[i].recE = s.devs[i].recE;
     devs[i].closedPrev = s.devs[i].closedPrev;
+    devs[i].transT = s.devs[i].transT;
+    devs[i].transFrom = s.devs[i].transFrom;
+    devs[i].transTo = s.devs[i].transTo;
   }
 }
 

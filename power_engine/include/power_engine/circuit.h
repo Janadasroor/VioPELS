@@ -24,9 +24,11 @@ class Circuit {
   /// Ideal switch between n1-n2. closed=false => Roff, true => Ron.
   /// eon/eoff: switching energy [J] dissipated on turn-on/off edges.
   /// ttail/tailk: exponential turn-off tail (Itail0 = tailk*Ioff), 0 = none.
+  /// tsw: slew-limited transition time (geometric R sweep, 0 = ideal instant).
   void addSwitch(const std::string& name, int n1, int n2, double ron = 5e-3,
                  double roff = 1e6, bool closed = false, double eon = 0.0,
-                 double eoff = 0.0, double ttail = 0.0, double tailk = 0.1);
+                 double eoff = 0.0, double ttail = 0.0, double tailk = 0.1,
+                 double tsw = 0.0);
   /// Ideal diode, n1=anode, n2=cathode. Starts blocking.
   /// qrr/trr: triangular reverse recovery (Irr = 2*Qrr/trr); 0 = ideal.
   void addDiode(const std::string& name, int anode, int cathode,

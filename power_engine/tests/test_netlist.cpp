@@ -163,6 +163,25 @@ TEST(NetlistParser, ErrorsThrow) {
   EXPECT_THROW(p.parse("R1 1 0 {UNDEFINED_PARAM}\nV1 1 0 1\n.end\n"),
                std::runtime_error);
   EXPECT_THROW(p.parse(""), std::runtime_error);  // empty: no devices
+  EXPECT_THROW(p.parse("S1 1 2 TSW=-1n\nV1 1 0 1\n.end\n"), std::runtime_error);
+}
+
+// Switch TSW: direct, via MODEL, round-trips through serialize.
+TEST(NetlistParser, SwitchTswParsesAndRoundTrips) {
+  Parser p;
+  auto a = p.parse(R"(
+.model SW1 mosfet_ideal RON=5m ROFF=1Meg TSW=100n
+V1 1 0 12
+S1 1 2 MODEL=SW1
+S2 2 0 TSW=200n
+.tran 1u 10u
+.end
+)");
+  EXPECT_DOUBLE_EQ(a.circuit.findDevice("S1").tsw, 100e-9);
+  EXPECT_DOUBLE_EQ(a.circuit.findDevice("S2").tsw, 200e-9);
+  auto b = p.parse(a.serialize());
+  EXPECT_DOUBLE_EQ(b.circuit.findDevice("S1").tsw, 100e-9);
+  EXPECT_NE(b.serialize().find("TSW="), std::string::npos);
 }
 
 // Ideal transformer: 12V primary, ratio 2:1, 10 ohm secondary load.

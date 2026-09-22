@@ -78,7 +78,8 @@ void Circuit::addCurrentSource(const std::string& name, int np, int nm, double i
 }
 
 void Circuit::addSwitch(const std::string& name, int n1, int n2, double ron, double roff,
-                        bool closed, double eon, double eoff, double ttail, double tailk) {
+                        bool closed, double eon, double eoff, double ttail, double tailk,
+                        double tsw) {
   checkNodes(n1, n2);
   checkPositive(ron, "Ron");
   checkPositive(roff, "Roff");
@@ -93,6 +94,9 @@ void Circuit::addSwitch(const std::string& name, int n1, int n2, double ron, dou
   if (!(tailk >= 0.0) || !std::isfinite(tailk)) {
     throw std::runtime_error("Tailk must be finite >= 0");
   }
+  if (!(tsw >= 0.0) || !std::isfinite(tsw)) {
+    throw std::runtime_error("Tsw must be finite >= 0");
+  }
   checkNameUnique(devices_, name);
   Device d = makeDevice(DeviceType::Switch, name, n1, n2, 0.0);
   d.ron = ron;
@@ -103,6 +107,7 @@ void Circuit::addSwitch(const std::string& name, int n1, int n2, double ron, dou
   d.eoff = eoff;
   d.ttail = ttail;
   d.tailk = tailk;
+  d.tsw = tsw;
   devices_.push_back(d);
 }
 

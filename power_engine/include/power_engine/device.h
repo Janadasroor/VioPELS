@@ -79,6 +79,19 @@ struct Device {
   double recI = 0.0;  // recovery amplitude [A, branch reference direction]
   double recE = 0.0;  // pending release energy [J], consumed by Engine losses
   bool closedPrev = false;  // gate state at previous step (edge detection)
+  // Slew-limited switching transition (PAT-style behavioral edge, 0 = ideal
+  // instant). On a gate toggle the resistance sweeps geometrically from its
+  // present value to the new steady value over tsw [s] (constant ratio per
+  // step — linear-in-R would jump decades on the first step and re-excite
+  // the ringing the ramp removes; MNA stays linear; no Miller plateau by
+  // design). The transition starts in the toggle step itself (frac = 0 =
+  // old R, so no ideal-commutation violence precedes it). The v*i integral over the ramp books into conduction loss
+  // exactly — do NOT combine with Eon/Eoff tables for the same edge
+  // (double counting). Solver-managed during the ramp.
+  double tsw = 0.0;        // transition time [s], 0 = ideal
+  double transT = 0.0;     // remaining transition time [s]
+  double transFrom = 0.0;  // resistance at toggle [Ohm]
+  double transTo = 0.0;    // target resistance [Ohm]
   // Datasheet loss-table references (netlist .etable names, UPPER-cased).
   // Empty = inactive (scalar eon/eoff/ron/vf used). Resolved by
   // Engine::applyLossModels into DeviceLossModel attachments.

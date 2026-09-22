@@ -1,3 +1,4 @@
+#include <cmath>
 #include <gtest/gtest.h>
 
 #include "power_engine/engine.h"
@@ -85,4 +86,97 @@ TEST(SolverGuard, FloatingNodesThrowSingular) {
   eng.start();
   EXPECT_THROW(eng.step(), std::runtime_error);
   EXPECT_EQ(eng.status(), power_engine::SimulationStatus::Error);
+}
+
+// --- Slew-limited transitions (tsw): geometric R sweep over tsw seconds.
+
+namespace {
+// R during a turn-on ramp started at t0 (Roff -> Ron over tsw).
+double rampR(double t, double t0, double tsw, double roff, double ron) {
+  const double f = std::min(1.0, std::max(0.0, (t - t0) / tsw));
+  return roff * std::pow(ron / roff, f);
+}
+}  // namespace
+
+// Resistive turn-on: V=10 -> switch -> Rload=10, tsw=200us. Load voltage
+// follows the divider with the geometric ramp exactly.
+TEST(SlewTransition, GeometricRampShape) {
+  constexpr double kTsw = 200e-6, kT0 = 100e-6;
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 10.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, false, 0.0, 0.0, 0.0, 0.1, kTsw);
+  eng.circuit().addResistor("R1", 2, 0, 10.0);
+  eng.setStopTime(600e-6);
+  eng.start();
+  eng.scheduleSwitch("S1", true, kT0);
+  for (double f : {0.25, 0.5, 0.75}) {
+    const double tWant = kT0 + f * kTsw;
+    while (eng.time() < tWant) eng.step();
+    const double rr = rampR(eng.time(), kT0, kTsw, 1e6, 5e-3);
+    EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 10.0 * 10.0 / (rr + 10.0),
+                0.02 * 10.0)
+        << "f=" << f;
+  }
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  // Settled ON: full rail.
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 10.0, 0.01);
+}
+
+// Inductive turn-off: 10mH/0.6A interrupted through the 200us ramp —
+// current transfers into the rising resistance with a ~190V peak (vs
+// ~500kV ideal) and decays cleanly to zero, no ringing.
+TEST(SlewTransition, InductiveNoSpike) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addInductor("L1", 1, 2, 10e-3, 1.0);
+  eng.circuit().addResistor("R1", 2, 0, 10.0);
+  eng.circuit().addSwitch("S1", 0, 1, 5e-3, 1e6, true, 0.0, 0.0, 0.0, 0.1, 200e-6);
+  eng.setStopTime(1200e-6);
+  eng.start();
+  eng.scheduleSwitch("S1", false, 500e-6);
+  double vMax = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.step();
+    const double v = std::abs(eng.currentSolution().probes.at("v:1") -
+                              eng.currentSolution().probes.at("v:2"));
+    if (v > vMax) vMax = v;
+  }
+  EXPECT_LT(vMax, 400.0);
+  EXPECT_NEAR(eng.deviceCurrent("L1"), 0.0, 1e-3);
+}
+
+// Energy conservation: parallel L+S loop (no R) opened through the ramp —
+// the full 1/2*L*I^2 must book into switch conduction loss.
+TEST(SlewTransition, TransitionEnergyConserved) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addInductor("L1", 0, 1, 10e-3, 1.0);
+  eng.circuit().addSwitch("S1", 1, 0, 5e-3, 1e6, true, 0.0, 0.0, 0.0, 0.1, 200e-6);
+  eng.setStopTime(600e-6);
+  eng.start();
+  eng.scheduleSwitch("S1", false, 100e-6);
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.step();
+    if (eng.time() >= 100e-6 && eng.time() < 101e-6) eng.resetAccumulators();
+  }
+  EXPECT_NEAR(eng.deviceLoss("S1").econd, 0.5 * 10e-3 * 1.0 * 1.0, 0.01 * 0.005);
+}
+
+// Mid-ramp retoggle: on at t0, off halfway, on again — restarts cleanly
+// from the ramp value and settles to the correct steady state.
+TEST(SlewTransition, RetoggleMidRamp) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 10.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, false, 0.0, 0.0, 0.0, 0.1, 200e-6);
+  eng.circuit().addResistor("R1", 2, 0, 10.0);
+  eng.setStopTime(800e-6);
+  eng.start();
+  eng.scheduleSwitch("S1", true, 100e-6);
+  eng.scheduleSwitch("S1", false, 200e-6);
+  eng.scheduleSwitch("S1", true, 250e-6);
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 10.0, 0.01);
+  EXPECT_TRUE(std::isfinite(eng.deviceCurrent("S1")));
 }

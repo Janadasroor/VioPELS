@@ -353,6 +353,7 @@ struct Elaborator {
       case 'Q': {
         if (pos.size() != 2) fail(line, "switch needs: Sname n1 n2 [MODEL=..] ..");
         double ron = 5e-3, roff = 1e6, eon = 0.0, eoff = 0.0, ttail = 0.0, tailk = 0.1;
+        double tsw = 0.0;
         bool closed = false;
         std::string eonTab, eoffTab, ronTab;  // .etable refs (UPPER)
         auto mit = kv.find("MODEL");
@@ -381,6 +382,7 @@ struct Elaborator {
           eoff = g("EOFF", 0.0);
           ttail = g("TTAIL", 0.0);
           tailk = g("TAILK", 0.1);
+          tsw = g("TSW", 0.0);
           eonTab = gs("EON_TABLE");
           eoffTab = gs("EOFF_TABLE");
           ronTab = gs("RON_TABLE");
@@ -409,6 +411,8 @@ struct Elaborator {
         tailk = kvNum(kv, "TAILK", tailk, line);
         if (!(ttail >= 0.0) || !std::isfinite(ttail)) fail(line, "TTAIL must be finite >= 0");
         if (!(tailk >= 0.0) || !std::isfinite(tailk)) fail(line, "TAILK must be finite >= 0");
+        tsw = kvNum(kv, "TSW", tsw, line);
+        if (!(tsw >= 0.0) || !std::isfinite(tsw)) fail(line, "TSW must be finite >= 0");
         auto iit = kv.find("INIT");
         if (iit != kv.end()) {
           if (ieq(iit->second, "ON") || ieq(iit->second, "CLOSED") || iit->second == "1") {
@@ -421,7 +425,7 @@ struct Elaborator {
           }
         }
         c.addSwitch(name, nodeId(pos[0], line), nodeId(pos[1], line), ron, roff, closed, eon,
-                    eoff, ttail, tailk);
+                    eoff, ttail, tailk, tsw);
         Device& ds = c.findDevice(name);
         ds.eonTable = eonTab;
         ds.eoffTable = eoffTab;
@@ -976,6 +980,7 @@ std::string NetlistResult::serialize() const {
         if (d.eon > 0.0) os << " EON=" << d.eon;
         if (d.eoff > 0.0) os << " EOFF=" << d.eoff;
         if (d.ttail > 0.0) os << " TTAIL=" << d.ttail << " TAILK=" << d.tailk;
+        if (d.tsw > 0.0) os << " TSW=" << d.tsw;
         if (!d.eonTable.empty()) os << " EON_TABLE=" << d.eonTable;
         if (!d.eoffTable.empty()) os << " EOFF_TABLE=" << d.eoffTable;
         if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
