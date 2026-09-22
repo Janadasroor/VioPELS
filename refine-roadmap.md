@@ -127,5 +127,6 @@ step→reset; xval settled-means vs ngspice (+ wall-clock table).
 No physics change on accepted inputs without a benchmark/proof entry;
 warnings-as-errors on all lanes; full `ctest` after solver/engine touches;
 `README` counts + `ARCHITECTURE` notes + the touched roadmap's boxes move
-in the same commit; `roadmap.md`/`agent.md`/this file stay local-only
-(gitignored) — never commit them.
+in the same commit; `roadmap.md`/`agent.md` stay local-only
+(gitignored) — never commit them. This file (`refine-roadmap.md`) is the
+shared track and IS committed.
