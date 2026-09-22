@@ -40,6 +40,17 @@ struct SweepTable {
 /// custom edges — all public Engine API), start, step to stop, then
 /// measure(eng, point) computes outputs. Exceptions in setup/run/measure
 /// are recorded per row unless stopOnError (then they propagate).
+///
+/// Parallelism: jobs==1 runs serially (default); jobs==0 uses
+/// hardware_concurrency; jobs==N>1 runs N worker threads over disjoint
+/// row ranges. Rows are written by index, so the table (and csv()) is
+/// bitwise identical for any job count. Each point owns a local Engine —
+/// no shared engine state — but setup/measure callbacks (and anything
+/// they capture) MUST be thread-safe when jobs!=1; sharing one mutable
+/// accumulator across points is a data race (keep per-point state in
+/// locals or recompute in measure). With jobs>1 + stopOnError, the first
+/// error is rethrown after in-flight points finish (vs immediate abort
+/// when serial).
 struct SweepConfig {
   std::string netlist;
   std::vector<SweepAxis> axes;
@@ -49,6 +60,7 @@ struct SweepConfig {
                                               const std::map<std::string, double>&)>
       measure;
   bool stopOnError = false;
+  int jobs = 1;  ///< 1 serial, 0 = auto (hardware_concurrency), N = threads
 };
 
 SweepTable runSweep(const SweepConfig& cfg);

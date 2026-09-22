@@ -1,9 +1,12 @@
 #include "power_engine/sweep.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 namespace power_engine {
 namespace sweep {
@@ -56,39 +59,82 @@ std::string SweepTable::csv() const {
 
 SweepTable runSweep(const SweepConfig& cfg) {
   if (!cfg.measure) throw std::runtime_error("runSweep needs a measure callback");
+  if (cfg.jobs < 0) throw std::runtime_error("runSweep jobs must be >= 0 (0 = auto)");
   for (const auto& ax : cfg.axes) checkAxis(ax);
   // Cartesian product sizes (empty axes = single point).
   std::size_t total = 1;
   for (const auto& ax : cfg.axes) total *= ax.values.size();
-  SweepTable table;
-  std::vector<std::size_t> idx(cfg.axes.size(), 0);
-  for (std::size_t n = 0; n < total; ++n) {
-    // Odometer: last axis fastest.
+  // Point parameters by flat index (odometer: last axis fastest).
+  auto pointAt = [&](std::size_t n) {
     std::map<std::string, double> point;
     std::size_t rem = n;
     for (std::size_t a = cfg.axes.size(); a-- > 0;) {
       const std::size_t m = cfg.axes[a].values.size();
-      idx[a] = rem % m;
+      point[cfg.axes[a].param] = cfg.axes[a].values[rem % m];
       rem /= m;
-      point[cfg.axes[a].param] = cfg.axes[a].values[idx[a]];
     }
+    return point;
+  };
+  auto runPoint = [&](std::size_t n) {
     SweepResult row;
-    row.params = point;
+    row.params = pointAt(n);
     try {
       Engine eng;
       eng.loadNetlist(cfg.netlist);
-      for (const auto& [k, v] : point) eng.setParameter(k, v);
-      cfg.setup(eng, point);
+      for (const auto& [k, v] : row.params) eng.setParameter(k, v);
+      cfg.setup(eng, row.params);
       eng.start();
       while (eng.status() == SimulationStatus::Running) eng.step();
-      row.outputs = cfg.measure(eng, point);
+      row.outputs = cfg.measure(eng, row.params);
     } catch (const std::exception& e) {
       if (cfg.stopOnError) throw;
       row.ok = false;
       row.error = e.what();
     }
-    table.rows.push_back(std::move(row));
+    return row;
+  };
+  unsigned jobs = 1;
+  if (cfg.jobs == 0) {
+    const unsigned hw = std::thread::hardware_concurrency();
+    jobs = hw == 0 ? 2u : hw;
+  } else {
+    jobs = static_cast<unsigned>(cfg.jobs);
   }
+  SweepTable table;
+  table.rows.resize(total);
+  if (jobs <= 1 || total <= 1) {
+    for (std::size_t n = 0; n < total; ++n) table.rows[n] = runPoint(n);
+    return table;
+  }
+  // Workers pull flat indices atomically; rows are disjoint by construction.
+  std::atomic<std::size_t> next{0};
+  std::atomic<bool> stop{false};
+  std::mutex errMutex;
+  std::exception_ptr firstErr;
+  const unsigned nWorkers = std::min<unsigned>(jobs, static_cast<unsigned>(total));
+  std::vector<std::thread> workers;
+  workers.reserve(nWorkers);
+  for (unsigned w = 0; w < nWorkers; ++w) {
+    workers.emplace_back([&] {
+      for (;;) {
+        if (stop.load(std::memory_order_relaxed)) return;
+        const std::size_t n = next.fetch_add(1, std::memory_order_relaxed);
+        if (n >= total) return;
+        try {
+          table.rows[n] = runPoint(n);
+        } catch (...) {
+          // stopOnError propagation (per-row std::exceptions are already
+          // recorded inside runPoint): first error wins, rethrown on join.
+          std::lock_guard<std::mutex> lock(errMutex);
+          if (!firstErr) firstErr = std::current_exception();
+          stop.store(true, std::memory_order_relaxed);
+          return;
+        }
+      }
+    });
+  }
+  for (auto& t : workers) t.join();
+  if (firstErr) std::rethrow_exception(firstErr);
   return table;
 }
 
