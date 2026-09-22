@@ -48,6 +48,8 @@ install/
 *.gcno
 *.gcov
 coverage/
+# ...except the coverage tooling itself
+!power_engine/coverage/
 perf.data
 perf.data.old
 gmon.out
