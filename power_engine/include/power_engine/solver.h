@@ -101,6 +101,8 @@ class TransientSolver {
   void setTime(double t);
 
   double nodeVoltage(int node) const;
+  /// Sorted non-ground node ids (topology-fixed mid-run; for probe loops).
+  const std::vector<int>& nodeList() const { return nodeList_; }
   /// Current through device (n1->n2) at current time.
   double deviceCurrent(const std::string& name) const;
 
@@ -156,6 +158,7 @@ class TransientSolver {
   std::vector<int> rowA_, rowB_, rowC_, rowD_;
   std::vector<int> rowE_;  // extra-var base row per device (-1 if none)
   bool hasNonlinear_ = false;  // any saturable inductor present
+  bool hasDiodes_ = false;     // any diode present (scan fast path)
   Eigen::VectorXd x_;                   // last solution
   // Reused across steps: no per-step heap allocation in the hot loop.
   mutable Eigen::MatrixXd workA_;

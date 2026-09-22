@@ -63,6 +63,7 @@ void TransientSolver::rebuildMaps() {
   nodeList_ = circuit_.nodes();
   nodeIndex_.clear();
   hasNonlinear_ = false;
+  hasDiodes_ = false;
   for (std::size_t i = 0; i < nodeList_.size(); ++i) nodeIndex_[nodeList_[i]] = static_cast<int>(i);
   extraRow_.clear();
   const auto& devs = circuit_.devices();
@@ -100,6 +101,7 @@ void TransientSolver::rebuildMaps() {
       rowD_[i] = r4;
     }
     if (d.type == DeviceType::SatInductor) hasNonlinear_ = true;
+    if (d.type == DeviceType::Diode) hasDiodes_ = true;
   }
   const auto n = static_cast<Eigen::Index>(nodeList_.size() + k);
   x_ = Eigen::VectorXd::Zero(n);
@@ -456,6 +458,7 @@ void TransientSolver::assembleCached() const {
 }
 
 bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
+  if (!hasDiodes_) return false;  // diode-free circuits skip the scan
   auto vRow = [&](int r) -> double { return r < 0 ? 0.0 : x(static_cast<Eigen::Index>(r)); };
   bool changed = false;
   auto& devs = circuit_.mutableDevices();
@@ -789,10 +792,7 @@ double TransientSolver::nodeVoltage(int node) const {
 }
 
 double TransientSolver::deviceCurrent(const std::string& name) const {
-  for (const auto& d : circuit_.devices()) {
-    if (d.name == name) return d.i_prev;
-  }
-  throw std::runtime_error("unknown device: " + name);
+  return circuit_.devices()[circuit_.deviceIndex(name)].i_prev;
 }
 
 }  // namespace power_engine

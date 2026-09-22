@@ -18,12 +18,17 @@ struct Result {
   long steps = 0;
   double wallMs = 0.0;
   double checksum = 0.0;
+  long long resolves = 0;     // diode-iteration re-solves
+  long long diodeEvents = 0;  // commutations
+  long long factorSkips = 0;  // cached-factorization hits
 };
 
 void report(const Result& r) {
   std::printf("%-18s steps=%-7ld wall=%8.1fms us/step=%7.3f checksum=%.12g\n",
               r.name.c_str(), r.steps, r.wallMs,
               r.wallMs * 1000.0 / static_cast<double>(r.steps), r.checksum);
+  std::printf("%-18s resolves=%lld events=%lld skips=%lld\n", "", r.resolves,
+              r.diodeEvents, r.factorSkips);
 }
 
 // Open-loop buck from the README netlist sketch: 12V, 20kHz, D=0.5,
@@ -57,7 +62,8 @@ Rload 3 0 5
   const auto t1 = std::chrono::steady_clock::now();
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
-  return {"buck-open-6ms", steps, ms, sum};
+  const auto& st = eng.solverStats();
+  return {"buck-open-6ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
 }
 
 // Uncontrolled Vienna diode bridge, 60ms @ 1us (60k steps, switching).
@@ -109,7 +115,8 @@ Result vienna() {
   const auto t1 = std::chrono::steady_clock::now();
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
-  return {"vienna-60ms", steps, ms, sum};
+  const auto& st = eng.solverStats();
+  return {"vienna-60ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
 }
 
 // RC ladder scaling probe: N rungs (1k series, 1uF shunt), 2000 steps @
@@ -142,7 +149,9 @@ Result ladder(int n) {
   const auto t1 = std::chrono::steady_clock::now();
   const double ms =
       std::chrono::duration<double, std::milli>(t1 - t0).count();
-  return {"ladder-" + std::to_string(n), steps, ms, sum};
+  const auto& st = eng.solverStats();
+  return {"ladder-" + std::to_string(n), steps, ms, sum, st.resolves, st.diodeEvents,
+          st.factorSkips};
 }
 
 }  // namespace

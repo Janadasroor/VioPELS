@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,10 @@ class Circuit {
 
   const Device& findDevice(const std::string& name) const;
   Device& findDevice(const std::string& name);
+  /// Device index by name (throws on unknown). O(log D) via a lazily
+  /// rebuilt map — valid while names/order are unchanged (append-only
+  /// construction + same-order state restore satisfy this).
+  std::size_t deviceIndex(const std::string& name) const;
 
   /// Sorted unique non-ground node ids.
   std::vector<int> nodes() const;
@@ -71,6 +76,7 @@ class Circuit {
                               const std::string& name);
 
   std::vector<Device> devices_;
+  mutable std::map<std::string, std::size_t> index_;  // lazy name -> position
 };
 
 }  // namespace power_engine

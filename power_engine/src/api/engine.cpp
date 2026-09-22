@@ -153,6 +153,13 @@ void Engine::start() {
   solver_.initialize();
   status_ = SimulationStatus::Running;
   started_ = true;
+  probeNodes_ = solver_.nodeList();
+  probeKeys_.clear();
+  probeKeys_.reserve(probeNodes_.size());
+  solution_.probes.clear();  // drop stale keys if re-started on new topology
+  solution_.states.clear();
+  solution_.states.reserve(probeNodes_.size());
+  for (int n : probeNodes_) probeKeys_.push_back("v:" + std::to_string(n));
   applyDueEvents(0.0);
   resetAccumulators();
   refreshSolution();
@@ -284,11 +291,11 @@ void Engine::stop() {
 
 void Engine::refreshSolution() {
   solution_.t = solver_.time();
-  solution_.probes.clear();
   solution_.states.clear();
-  for (int n : circuit_.nodes()) {
-    solution_.probes["v:" + std::to_string(n)] = solver_.nodeVoltage(n);
-    solution_.states.push_back(solver_.nodeVoltage(n));
+  for (std::size_t k = 0; k < probeNodes_.size(); ++k) {
+    const double v = solver_.nodeVoltage(probeNodes_[k]);
+    solution_.probes[probeKeys_[k]] = v;  // in place: no clear/reinsert
+    solution_.states.push_back(v);
   }
   for (const auto& [name, net] : thermals_) {
     solution_.probes["tj:" + name] = net.tj();

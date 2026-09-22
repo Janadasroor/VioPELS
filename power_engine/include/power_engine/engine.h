@@ -146,6 +146,12 @@ class Engine {
   SimulationStatus status_ = SimulationStatus::Idle;
   Solution solution_;
   SolutionCallback callback_;
+  // Probe fast path (refreshSolution runs every sub-step): node ids + key
+  // strings snapshotted at start() (topology is fixed mid-run — the solver
+  // throws otherwise), probes updated in place (no clear/reinsert, no
+  // to_string per step).
+  std::vector<int> probeNodes_;
+  std::vector<std::string> probeKeys_;
   std::vector<SwitchEvent> events_;  // sorted by .at
   // Phase 3 netlist state.
   std::string netlistSource_;

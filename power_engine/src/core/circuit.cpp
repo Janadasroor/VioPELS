@@ -184,17 +184,21 @@ void Circuit::addSaturableInductor(const std::string& name, int n1, int n2, doub
 }
 
 Device& Circuit::findDevice(const std::string& name) {
-  for (auto& d : devices_) {
-    if (d.name == name) return d;
-  }
-  throw std::runtime_error("unknown device: " + name);
+  return devices_[deviceIndex(name)];
 }
 
 const Device& Circuit::findDevice(const std::string& name) const {
-  for (const auto& d : devices_) {
-    if (d.name == name) return d;
+  return devices_[deviceIndex(name)];
+}
+
+std::size_t Circuit::deviceIndex(const std::string& name) const {
+  if (index_.size() != devices_.size()) {
+    index_.clear();
+    for (std::size_t i = 0; i < devices_.size(); ++i) index_[devices_[i].name] = i;
   }
-  throw std::runtime_error("unknown device: " + name);
+  const auto it = index_.find(name);
+  if (it == index_.end()) throw std::runtime_error("unknown device: " + name);
+  return it->second;
 }
 
 void Circuit::setSwitch(const std::string& name, bool closed) {

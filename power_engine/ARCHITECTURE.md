@@ -38,7 +38,11 @@
   exact-time edges split `step()` into sub-steps
   (`dt_sub = t_event - t_now`, companions use the sub-step dt);
   diode iteration runs inside every sub-step; nominal dt restored after;
-  `step()` clamps to `tStop`. Device *values* may change mid-run (load
+  `step()` clamps to `tStop`. Hot-loop de-churn: probe node ids + key
+  strings are snapshotted at `start()` and probes updated in place (no
+  per-step `nodes()` set+sort, `to_string`, or map reinsert); device
+  lookup is a lazy name->index map; the diode scan is skipped when the
+  circuit has no diodes. Device *values* may change mid-run (load
   steps); topology may not. `deviceCurrent()` passthrough.
 - `src/netlist/parser.cpp`: single-pass elaborator. SI suffixes
   (f p n u m k Meg G T), `{expressions}` over `.param` (recursive descent,
