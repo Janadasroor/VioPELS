@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(POWER_ENGINE_BUILD_TESTS "Build tests" ON)
 option(POWER_ENGINE_BUILD_EXAMPLES "Build examples" ON)
 option(POWER_ENGINE_BUILD_FUZZ "Build libFuzzer parser target (needs Clang)" OFF)
+option(POWER_ENGINE_COVERAGE "gcov coverage instrumentation (needs GCC)" OFF)
 # Sanitizers for CI/local verification: -DPOWER_ENGINE_SANITIZE=address,undefined
 set(POWER_ENGINE_SANITIZE "" CACHE STRING "Sanitizers to enable (address,undefined,thread)")
 
@@ -84,6 +85,14 @@ foreach(tgt power_engine power_engine_shared)
   # Warnings are build-tree-only: PRIVATE deps of static archives would
   # otherwise propagate -Werror to consumers via the export set.
   target_link_libraries(${tgt} PRIVATE $<BUILD_INTERFACE:power_engine_warnings>)
+  if(POWER_ENGINE_COVERAGE)
+    # -O1: -O0 Eigen is ~17x slower (test suite would take 20+ min);
+    # -O1 keeps line attribution sane at a fraction of the cost.
+    target_compile_options(${tgt} PRIVATE -O1 -g --coverage)
+    # PUBLIC-but-build-tree-only: test executables need libgcov at link;
+    # the genex strips it from the install export set.
+    target_link_options(${tgt} PUBLIC $<BUILD_INTERFACE:--coverage>)
+  endif()
   if(Eigen3_FOUND)
     target_link_libraries(${tgt} PUBLIC Eigen3::Eigen)
   else()

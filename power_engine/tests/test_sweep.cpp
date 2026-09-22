@@ -164,7 +164,13 @@ TEST(SweepThreads, ParallelFaster) {
       std::chrono::duration<double, std::milli>(t3 - t2).count();
   std::printf("[sweep] serial=%.0fms parallel(4)=%.0fms speedup=%.2f\n", serialMs,
               parMs, serialMs / parMs);
+#ifdef NDEBUG
+  // Release-only: on unoptimized/instrumented builds (Debug, coverage,
+  // sanitizers) thread + instrumentation overhead dominates these tiny
+  // sims and the ratio is meaningless; correctness (csv above) is the
+  // assertion there.
   EXPECT_LT(parMs, serialMs);
+#endif
 }
 // Transient-free checks (edge-counted esw is exact; econd carries the
 // L/C startup, tolerated by shape/monotonicity assertions) plus an
@@ -233,4 +239,75 @@ Rload 3 0 {RLOAD}
     EXPECT_LT(eta, prevEta) << "R=" << rl;  // switching floor: lighter load = worse eta
     prevEta = eta;
   }
+}
+
+// --- Monte Carlo tolerance analysis: deterministic sampling + stats.
+TEST(MonteCarlo, SamplersDeterministicAndBounded) {
+  using power_engine::sweep::gaussianSamples;
+  using power_engine::sweep::uniformSamples;
+  // Same seed -> bitwise identical (integer arithmetic, cross-platform).
+  EXPECT_EQ(uniformSamples(64, -2.0, 5.0, 12345u), uniformSamples(64, -2.0, 5.0, 12345u));
+  EXPECT_EQ(gaussianSamples(64, 1.0, 0.5, 999u), gaussianSamples(64, 1.0, 0.5, 999u));
+  // Different seeds differ.
+  EXPECT_NE(uniformSamples(64, -2.0, 5.0, 1u), uniformSamples(64, -2.0, 5.0, 2u));
+  for (double v : uniformSamples(1000, -2.0, 5.0)) {
+    EXPECT_GE(v, -2.0);
+    EXPECT_LT(v, 5.0);
+  }
+  // Gaussian moments (Box-Muller is exact; loose tolerance for safety).
+  const auto g = gaussianSamples(20000, 10.0, 2.0);
+  double m = 0.0;
+  for (double v : g) m += v;
+  m /= g.size();
+  double s2 = 0.0;
+  for (double v : g) s2 += (v - m) * (v - m);
+  EXPECT_NEAR(m, 10.0, 0.05);
+  EXPECT_NEAR(std::sqrt(s2 / g.size()), 2.0, 0.05);
+  EXPECT_THROW(uniformSamples(0, 0.0, 1.0), std::runtime_error);
+  EXPECT_THROW(uniformSamples(8, 2.0, 1.0), std::runtime_error);
+  EXPECT_THROW(gaussianSamples(8, 0.0, -1.0), std::runtime_error);
+}
+
+TEST(MonteCarlo, StatsExactOnHandTable) {
+  using power_engine::sweep::columnStats;
+  using power_engine::sweep::SweepResult;
+  using power_engine::sweep::SweepTable;
+  using power_engine::sweep::yieldWithin;
+  SweepTable t;
+  for (double v : {1.0, 2.0, 3.0, 4.0}) {
+    SweepResult r;
+    r.outputs = {{"y", v}};
+    t.rows.push_back(r);
+  }
+  SweepResult bad;
+  bad.ok = false;
+  bad.error = "x";
+  t.rows.push_back(bad);
+  const auto s = columnStats(t, "y");
+  EXPECT_EQ(s.n, 4u);
+  EXPECT_DOUBLE_EQ(s.mean, 2.5);
+  EXPECT_DOUBLE_EQ(s.std, std::sqrt(1.25));
+  EXPECT_DOUBLE_EQ(s.min, 1.0);
+  EXPECT_DOUBLE_EQ(s.max, 4.0);
+  EXPECT_DOUBLE_EQ(yieldWithin(t, "y", 2.0, 3.0), 0.5);
+  EXPECT_DOUBLE_EQ(yieldWithin(t, "y", 0.0, 10.0), 1.0);
+  SweepTable empty;
+  EXPECT_THROW(columnStats(empty, "y"), std::runtime_error);
+  EXPECT_THROW(yieldWithin(empty, "y", 0.0, 1.0), std::runtime_error);
+}
+
+// End-to-end: RLOAD +-10% uniform (32 pts, threaded) on the buck — Vout
+// barely moves (voltage-stiff output), yield is 1.0, stats are sane.
+TEST(MonteCarlo, BuckLoadTolerance) {
+  SweepConfig cfg = buckGrid();
+  cfg.axes = {{"RLOAD", power_engine::sweep::uniformSamples(32, 4.5, 5.5, 7u)}};
+  cfg.jobs = 4;
+  const SweepTable t = runSweep(cfg);
+  ASSERT_EQ(t.rows.size(), 32u);
+  for (const auto& r : t.rows) ASSERT_TRUE(r.ok) << r.error;
+  const auto s = power_engine::sweep::columnStats(t, "vout");
+  EXPECT_GT(s.mean, 5.5);
+  EXPECT_LT(s.mean, 6.5);
+  EXPECT_LT(s.std, 0.05 * s.mean);  // stiff output: tight spread
+  EXPECT_DOUBLE_EQ(power_engine::sweep::yieldWithin(t, "vout", 5.0, 7.0), 1.0);
 }

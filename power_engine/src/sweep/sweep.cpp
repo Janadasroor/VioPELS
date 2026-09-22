@@ -11,6 +11,93 @@
 namespace power_engine {
 namespace sweep {
 namespace {
+// splitmix64: deterministic integer PRNG (no FP platform variance).
+uint64_t splitmix64(uint64_t& s) {
+  uint64_t z = (s += 0x9E3779B97F4A7C15ULL);
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return z ^ (z >> 31);
+}
+// Uniform [0,1): 53-bit mantissa from the top bits (never exactly 1.0,
+// and > 0 unless the draw is exactly zero — guarded by callers).
+double unit01(uint64_t& s) {
+  return (static_cast<double>(splitmix64(s) >> 11)) * (1.0 / 9007199254740992.0);
+}
+}  // namespace
+
+std::vector<double> uniformSamples(int n, double lo, double hi, std::uint64_t seed) {
+  if (n <= 0) throw std::runtime_error("uniformSamples needs n > 0");
+  if (!(lo <= hi) || !std::isfinite(lo) || !std::isfinite(hi))
+    throw std::runtime_error("uniformSamples needs finite lo <= hi");
+  std::vector<double> out;
+  out.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n; ++i) out.push_back(lo + (hi - lo) * unit01(seed));
+  return out;
+}
+
+std::vector<double> gaussianSamples(int n, double mean, double sigma, std::uint64_t seed) {
+  if (n <= 0) throw std::runtime_error("gaussianSamples needs n > 0");
+  if (!(sigma >= 0.0) || !std::isfinite(sigma) || !std::isfinite(mean))
+    throw std::runtime_error("gaussianSamples needs finite mean, sigma >= 0");
+  std::vector<double> out;
+  out.reserve(static_cast<std::size_t>(n));
+  constexpr double kPi = 3.14159265358979323846;
+  for (int i = 0; i < n;) {
+    // Box-Muller pair; u1 in (0,1) — redraw on exact 0 (log domain).
+    double u1 = 0.0;
+    while (u1 <= 0.0) u1 = unit01(seed);
+    const double u2 = unit01(seed);
+    const double r = std::sqrt(-2.0 * std::log(u1));
+    const double a = 2.0 * kPi * u2;
+    out.push_back(mean + sigma * r * std::cos(a));
+    if (++i < n) out.push_back(mean + sigma * r * std::sin(a));
+    ++i;
+  }
+  return out;
+}
+
+ColumnStats columnStats(const SweepTable& t, const std::string& output) {
+  ColumnStats s;
+  double m2 = 0.0;
+  bool first = true;
+  for (const auto& r : t.rows) {
+    if (!r.ok) continue;
+    const auto it = r.outputs.find(output);
+    if (it == r.outputs.end()) throw std::runtime_error("columnStats: missing output " + output);
+    const double x = it->second;
+    if (first) {
+      s.mean = x;
+      s.min = x;
+      s.max = x;
+      first = false;
+    } else {
+      const double d = x - s.mean;
+      s.mean += d / static_cast<double>(s.n + 1);
+      m2 += d * (x - s.mean);
+      if (x < s.min) s.min = x;
+      if (x > s.max) s.max = x;
+    }
+    ++s.n;
+  }
+  if (s.n == 0) throw std::runtime_error("columnStats: no ok rows for " + output);
+  s.std = s.n > 1 ? std::sqrt(m2 / static_cast<double>(s.n)) : 0.0;
+  return s;
+}
+
+double yieldWithin(const SweepTable& t, const std::string& output, double lo, double hi) {
+  std::size_t ok = 0, in = 0;
+  for (const auto& r : t.rows) {
+    if (!r.ok) continue;
+    const auto it = r.outputs.find(output);
+    if (it == r.outputs.end()) throw std::runtime_error("yieldWithin: missing output " + output);
+    ++ok;
+    if (it->second >= lo && it->second <= hi) ++in;
+  }
+  if (ok == 0) throw std::runtime_error("yieldWithin: no ok rows for " + output);
+  return static_cast<double>(in) / static_cast<double>(ok);
+}
+
+namespace {
 
 void checkAxis(const SweepAxis& ax) {
   if (ax.param.empty()) throw std::runtime_error("sweep axis needs a param name");

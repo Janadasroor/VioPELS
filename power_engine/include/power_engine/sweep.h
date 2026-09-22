@@ -1,4 +1,6 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
@@ -64,6 +66,32 @@ struct SweepConfig {
 };
 
 SweepTable runSweep(const SweepConfig& cfg);
+
+// --- Monte Carlo tolerance analysis (item 18). Axes take explicit value
+// lists, so an MC run is just a sampled axis + runSweep (threaded) +
+// statistics below. Sampling is deterministic (splitmix64, integer
+// arithmetic — bitwise reproducible across platforms for a fixed seed).
+
+/// n uniform samples in [lo, hi] (throws if n <= 0 or lo > hi).
+std::vector<double> uniformSamples(int n, double lo, double hi,
+                                   std::uint64_t seed = 0x9E3779B97F4A7C15ULL);
+/// n Gaussian samples N(mean, sigma) via Box-Muller (sigma >= 0; throws
+/// otherwise). Deterministic for a fixed seed.
+std::vector<double> gaussianSamples(int n, double mean, double sigma,
+                                    std::uint64_t seed = 0x6A09E667F3BCC909ULL);
+
+/// Moments over one output column across ok rows (throws if empty).
+struct ColumnStats {
+  double mean = 0.0;
+  double std = 0.0;  ///< population std
+  double min = 0.0;
+  double max = 0.0;
+  std::size_t n = 0;
+};
+ColumnStats columnStats(const SweepTable& t, const std::string& output);
+/// Fraction of ok rows with output in [lo, hi] (throws if no ok rows).
+double yieldWithin(const SweepTable& t, const std::string& output, double lo,
+                   double hi);
 
 }  // namespace sweep
 }  // namespace power_engine

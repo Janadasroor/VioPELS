@@ -154,7 +154,10 @@
   and measure callback for outputs, per-row error capture (or
   stopOnError), CSV table. Threaded (`jobs`: 1 serial, 0 auto, N workers;
   rows by index so output is bitwise identical; callbacks must be
-  thread-safe — no shared mutable accumulator). Lessons: cumulative loss energies include
+  thread-safe — no shared mutable accumulator). Monte Carlo tolerance
+  analysis rides the harness: deterministic splitmix64 uniform/gaussian
+  samplers fill axes, columnStats/yieldWithin summarize output columns.
+  Lessons: cumulative loss energies include
   startup transient (edge-counted switching is transient-free; compare
   conduction by shape/monotonicity or POP-init); light-load buck runs
   DCM (Vout rises — use measured Vout in analytics, never ideal D*Vin).
