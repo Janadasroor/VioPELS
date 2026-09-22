@@ -199,6 +199,10 @@
   (probe or arbitrary sampler, exact windows via interpolated cropping),
   time-weighted stats (mean/RMS/min/max/pk-pk), windowed ripple, harmonic
   spectrum + THD via exact-kernel correlation (integer-period windows).
+- EMI screening (`emi.h`, `src/emi/`): DC LISN builder, peak table at
+  switching harmonics (coherent DFT — exact for stationary line spectra),
+  CISPR 32 Class B QP table + margin check. Pre-compliance screening
+  only (single port, stationary, peak-vs-QP); needs dt << tsw.
 - Steady-state shooting (`steadystate.h`, `src/steadystate/`): Newton on
   the period map over continuous states (L currents, C voltages; diodes
   re-settle inside every period sim), finite-difference Jacobian,

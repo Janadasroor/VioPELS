@@ -63,6 +63,7 @@ set(POWER_ENGINE_SOURCES
   src/ac/ac.cpp
   src/steadystate/steadystate.cpp
   src/measurements/measurements.cpp
+  src/emi/emi.cpp
   src/waveforms/waveforms.cpp
   src/loopgain/loopgain.cpp
   src/loss_tables/loss_tables.cpp
