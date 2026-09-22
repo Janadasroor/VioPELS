@@ -36,6 +36,10 @@ class Engine {
   const Circuit& circuit() const { return circuit_; }
 
   void setTimeStep(double dt);
+  /// Time-integration method (default trapezoidal; TrBdf2 is L-stable and
+  /// damps switching-induced trapezoidal ringing at ~2x solves per step).
+  /// Histories are shared: safe to change mid-run, applies to next step.
+  void setIntegrator(Integrator m) { solver_.setIntegrator(m); }
   void setStopTime(double tStop);
   double stopTime() const { return tStop_; }  // 0 = none
   void clearStopTime() { tStop_ = 0.0; }

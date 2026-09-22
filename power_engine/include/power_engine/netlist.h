@@ -17,11 +17,12 @@ struct ModelDef {
   std::map<std::string, std::string> str;
 };
 
-/// A `.tran dt tstop` directive.
+/// A `.tran dt tstop [method]` directive (method: TRAP default, TRBDF2).
 struct TranSpec {
   bool given = false;
   double dt = 1e-6;
   double tstop = 0.0;
+  std::string method;  // "" = trapezoidal default
 };
 
 /// A `.control pwm ...` directive: open-loop gate drive for one switch

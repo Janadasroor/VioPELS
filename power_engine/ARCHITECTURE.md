@@ -18,7 +18,15 @@
     live in the RHS. Unchanged-signature steps skip A-reassembly and
     refactorization (`factorSkips`); saturable-Newton circuits bypass.
     Full frames pass exactly `baseDt` (never recomputed `(t+dt)-t`, whose
-    1-ulp jitter would defeat the cache).
+    1-ulp jitter would defeat the cache). Factorization objects are
+    per cache slot (one per integrator stage): a hit reuses slot factors
+    regardless of what the shared workA_ scratch currently holds.
+  - Integrator option (item 16, opt-in): `Trapezoidal` (default, 2nd-order)
+    or `TrBdf2` (trap half step + BDF2 full step, 2nd-order L-stable —
+    damps switch-excited Nyquist ringing ~1e65x on the interrupt fixture).
+    BDF2 companions for C/L/coupled/sat (Newton included, frozen midpoint
+    flux); midpoint history fields on Device; stage salt in the cache
+    signature; `.tran dt tstop [TRAP|TRBDF2]`; `Engine::setIntegrator`.
   - After each solve, diode Vd/Id are checked and flipped
     states trigger an immediate re-solve at the same time point (up to 10
     iterations). Chatter suppressed with hysteresis (on when `Vd>Vf+1nV`,

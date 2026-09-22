@@ -19,6 +19,14 @@
 
 namespace power_engine {
 
+/// Time-integration method for the transient solver. Trapezoidal is the
+/// default (2nd-order, energy-preserving, exact for our validation suite).
+/// TrBdf2 (trapezoidal half step + BDF2 full step) is 2nd-order and
+/// L-stable: it damps the trapezoidal Nyquist ringing that ideal
+/// switching events excite on stiff nodes, at ~2x solves per step.
+/// Opt-in per solver; histories are shared so the mode may change mid-run.
+enum class Integrator { Trapezoidal, TrBdf2 };
+
 /// Solver statistics for event-detection acceptance ("no missed events").
 struct SolverStats {
   long long steps = 0;        ///< accepted time steps
@@ -85,6 +93,8 @@ class TransientSolver {
   void setAdaptive(double tol, double dtMin, double dtMax);
   void clearAdaptive() { adaptive_ = AdaptiveConfig{}; }
   bool adaptive() const { return adaptive_.enabled; }
+  void setIntegrator(Integrator m) { integ_ = m; }
+  Integrator integrator() const { return integ_; }
 
   /// Reset t=0 and device histories from Device::ic.
   void initialize();
@@ -113,7 +123,11 @@ class TransientSolver {
   /// signature + dt) — histories, source values and recovery currents
   /// live in z only.
   void assemble(bool withMatrix) const;
-  void updateHistories(const Eigen::VectorXd& x);
+  /// History target/commit method for updateHistories: trapezoidal or
+  /// BDF2 commit to step state, or trapezoidal capture to midpoint state
+  /// (TR-BDF2 stage 1; timers/flux-release/edge state untouched).
+  enum class HistHow { TrapPrev, TrapMid, Bdf2Prev };
+  void updateHistories(const Eigen::VectorXd& x, HistHow how);
   Eigen::VectorXd solveLinear() const;  // factorize + solve (full path)
   void factorize() const;               // (re)factor workA_ into workLu_/workSlu_
   Eigen::VectorXd solveFactors() const;  // triangular solve with workZ_
@@ -127,6 +141,10 @@ class TransientSolver {
   bool updateDiodeStates(const Eigen::VectorXd& x);
   /// One fixed step of exactly dtNew (no error control). Advances t_.
   void fixedStep(double dtNew);
+  /// One TR-BDF2 step of exactly dtNew (no error control). Advances t_.
+  void trBdf2Step(double dtNew);
+  /// One converged solve at the current dt_/stage (Newton + diode loops).
+  void convergeStep();
   struct Snapshot;
   Snapshot snapshot() const;
   void restore(const Snapshot& s);
@@ -151,6 +169,12 @@ class TransientSolver {
   double dt_;
   double t_ = 0.0;
   AdaptiveConfig adaptive_;
+  Integrator integ_ = Integrator::Trapezoidal;
+  // True during TR-BDF2 stage 2: selects BDF2 companions in assemble() and
+  // the BDF2 Newton formula, and salts the factorization signature (stage
+  // 2 shares dt_ with trapezoidal steps but stamps a different matrix).
+  // Managed strictly inside trBdf2Step(); always false elsewhere.
+  mutable bool bdf2Stage_ = false;
   std::vector<int> nodeList_;           // non-ground nodes, sorted
   std::map<int, int> nodeIndex_;        // node id -> 0-based row
   std::map<std::string, std::size_t> extraRow_;  // device -> base extra-var row
@@ -161,11 +185,14 @@ class TransientSolver {
   bool hasDiodes_ = false;     // any diode present (scan fast path)
   Eigen::VectorXd x_;                   // last solution
   // Reused across steps: no per-step heap allocation in the hot loop.
+  // Factorization objects are per cache slot (one per integrator stage):
+  // a hit reuses slot factors regardless of what workA_ currently holds
+  // (workA_ is scratch; the slot owns the factors of its matrix).
   mutable Eigen::MatrixXd workA_;
   mutable Eigen::VectorXd workZ_;
-  mutable Eigen::PartialPivLU<Eigen::MatrixXd> workLu_;
+  mutable Eigen::PartialPivLU<Eigen::MatrixXd> workLu_[2];
   mutable Eigen::SparseMatrix<double> workAs_;
-  mutable Eigen::SparseLU<Eigen::SparseMatrix<double>> workSlu_;
+  mutable Eigen::SparseLU<Eigen::SparseMatrix<double>> workSlu_[2];
   mutable SolverStats stats_;  // bookkeeping, mutated even in const solves
   /// FNV-1a signature over every matrix-affecting input (dt, R/L/C/k,
   /// switch states + ron/roff, diode conducting/recovery + ron/roff,
@@ -176,8 +203,11 @@ class TransientSolver {
     bool operator==(const MatrixSig& o) const { return h == o.h; }
   };
   MatrixSig matrixSig() const;
-  mutable MatrixSig cachedSig_;
-  mutable bool cacheValid_ = false;  // cleared by rebuildMaps()
+  // One cache entry per integrator stage: TR-BDF2 alternates stage 1
+  // (dt/2) and stage 2 (BDF2 companions) every step, so a single entry
+  // would thrash to a 0% hit rate. Trapezoidal steps always use slot 0.
+  mutable MatrixSig cachedSig_[2];
+  mutable bool cacheValid_[2] = {false, false};  // cleared by rebuildMaps()
 };
 
 }  // namespace power_engine

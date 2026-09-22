@@ -51,6 +51,13 @@ struct Device {
   double i2_prev = 0.0;  // transformer secondary current n3->n4
   // Coupled-inductor second winding history.
   double v2_prev = 0.0;  // V(n3)-V(n4) at previous step
+  // TR-BDF2 intra-step midpoint state (solver-managed scratch: captured
+  // after stage 1, consumed by stage 2, never carried across steps).
+  double v_mid = 0.0;    // V(n1)-V(n2) at the half step
+  double i_mid = 0.0;    // current n1->n2 at the half step
+  double v2_mid = 0.0;   // V(n3)-V(n4) at the half step
+  double i2_mid = 0.0;   // secondary current at the half step
+  double ik_mid = 0.0;   // Newton operating point at the half step (sat)
 
   // Switch / diode parameters (unused by other types).
   double ron = 5e-3;     // on-resistance [Ohm]

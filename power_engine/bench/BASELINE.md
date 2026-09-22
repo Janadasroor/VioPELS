@@ -16,6 +16,7 @@ bitwise identical to the 14b section (pure overhead removal).
 ```
 buck-open-6ms      steps=12000   wall=    15.4ms us/step=  1.285 checksum=73604.5196971
 vienna-60ms        steps=60000   wall=    91.3ms us/step=  1.521 checksum=28383342.7156
+vienna-trbdf2      steps=60000   wall=   126.6ms us/step=  2.110 checksum=28383411.8021
 ladder-10          steps=2000    wall=     1.7ms us/step=  0.854 checksum=8534.87986295
 ladder-40          steps=2000    wall=     7.3ms us/step=  3.650 checksum=8534.87986295
 ladder-160         steps=2000    wall=    38.0ms us/step= 19.017 checksum=8534.87986295
@@ -25,6 +26,12 @@ ladder-320         steps=2000    wall=   125.0ms us/step= 62.499 checksum=8534.8
 Per-fixture solver stats (new in pe_bench): buck resolves=239 (2% of
 steps), vienna resolves=41 (0.07%) — diode iteration is NOT a speed
 problem (see 14c note below). Cache hits: buck 97%, vienna/ladders ~100%.
+
+vienna-trbdf2 has its own checksum (different method, different
+trajectory — 2.4e-6 from trap). Cache-correctness proof: this checksum
+is bitwise identical with and without the factorization cache
+(119954/120000 hits). Cost ~2.3x trap wall-clock (2 stages + diode
+loops), as expected.
 
 ## v0.1.0 + factorization cache (14b) + dt-exactness fix
 

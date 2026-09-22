@@ -113,9 +113,11 @@ void TransientSolver::rebuildMaps() {
     // check: analyzePattern reports via the later factorize info.)
     assemble(true);
     workAs_ = workA_.sparseView();
-    workSlu_.analyzePattern(workAs_);
+    workSlu_[0].analyzePattern(workAs_);
+    workSlu_[1].analyzePattern(workAs_);
   }
-  cacheValid_ = false;  // maps/buffers rebuilt: drop any cached factors
+  cacheValid_[0] = false;  // maps/buffers rebuilt: drop cached factors
+  cacheValid_[1] = false;
 }
 
 void TransientSolver::initialize() {
@@ -216,15 +218,20 @@ void TransientSolver::assemble(bool withMatrix) const {
         break;
       }
       case DeviceType::Capacitor: {
-        const double g = 2.0 * d.value / dt_;  // trapezoidal
-        const double iHist = -g * d.v_prev - d.i_prev;
+        // BDF2: i = (3C/dt)*v - (4C/dt)*vMid + (C/dt)*vPrev.
+        const double g = bdf2Stage_ ? 3.0 * d.value / dt_ : 2.0 * d.value / dt_;
+        const double iHist = bdf2Stage_ ? -g * ((4.0 / 3.0) * d.v_mid - d.v_prev / 3.0)
+                                        : -g * d.v_prev - d.i_prev;
         if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, iHist);
         break;
       }
       case DeviceType::Inductor: {
-        const double g = dt_ / (2.0 * d.value);  // trapezoidal
-        const double iHist = d.i_prev + g * d.v_prev;
+        // BDF2: i = (4/3)*iMid - (1/3)*iPrev + (dt/3L)*v (voltages enter
+        // only through the new step — BDF2 differentiates the state).
+        const double g = bdf2Stage_ ? dt_ / (3.0 * d.value) : dt_ / (2.0 * d.value);
+        const double iHist = bdf2Stage_ ? (4.0 / 3.0) * d.i_mid - d.i_prev / 3.0
+                                        : d.i_prev + g * d.v_prev;
         if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, iHist);
         break;
@@ -299,9 +306,10 @@ void TransientSolver::assemble(bool withMatrix) const {
       case DeviceType::CoupledInductor: {
         // Trapezoidal 2-port Norton from flux linkage L*i with
         // L = [[L1,M],[M,L2]]: i_{n+1} = G*v_{n+1} + hist,
-        // G = (dt/2)*L^-1, hist = i_n + G*v_n. Dots at winding starts.
+        // G = (dt/2)*L^-1, hist = i_n + G*v_n. BDF2: G = (dt/3)*L^-1,
+        // hist = (4/3)*iMid - (1/3)*i_n. Dots at winding starts.
         const double det = d.l1 * d.l2 - d.m * d.m;  // > 0 since k < 1
-        const double f = 0.5 * dt_ / det;
+        const double f = (bdf2Stage_ ? 2.0 / 3.0 : 0.5) * dt_ / det;
         const double g11 = f * d.l2;
         const double g12 = -f * d.m;
         const double g22 = f * d.l1;
@@ -309,8 +317,10 @@ void TransientSolver::assemble(bool withMatrix) const {
         const int r4 = rowD_[i];
         const double v1p = d.v_prev;
         const double v2p = d.v2_prev;
-        const double h1 = d.i_prev + g11 * v1p + g12 * v2p;
-        const double h2 = d.i2_prev + g12 * v1p + g22 * v2p;
+        const double h1 = bdf2Stage_ ? (4.0 / 3.0) * d.i_mid - d.i_prev / 3.0
+                                     : d.i_prev + g11 * v1p + g12 * v2p;
+        const double h2 = bdf2Stage_ ? (4.0 / 3.0) * d.i2_mid - d.i2_prev / 3.0
+                                     : d.i2_prev + g12 * v1p + g22 * v2p;
         // Conductance block.
         const int rows[4] = {r1, r2, r3, r4};
         const double gmat[4][4] = {{g11, -g11, g12, -g12},
@@ -332,11 +342,19 @@ void TransientSolver::assemble(bool withMatrix) const {
       }
       case DeviceType::SatInductor: {
         // Newton-linearized companion at ik: G = dt/(2*Ld(ik)),
-        // Ieq = ik - (λ(ik)-flux_n)/Ld + G*v_n.
+        // Ieq = ik - (λ(ik)-flux_n)/Ld + G*v_n. BDF2 stage: G = dt/(3Ld),
+        // Ieq = ik + ((4/3)λMid - (1/3)flux_n - λ(ik))/Ld with the frozen
+        // midpoint flux λMid = λ(ik_mid); voltages enter through G*v only.
         const double ld = satSlope(d.newton_ik, d.value, d.lsat, d.isat);
-        const double g = dt_ / (2.0 * ld);
+        const double g = bdf2Stage_ ? dt_ / (3.0 * ld) : dt_ / (2.0 * ld);
         const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
-        const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
+        double ieq;
+        if (bdf2Stage_) {
+          const double lamMid = satFlux(d.ik_mid, d.value, d.lsat, d.isat);
+          ieq = d.newton_ik + ((4.0 / 3.0) * lamMid - d.flux / 3.0 - lam) / ld;
+        } else {
+          ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
+        }
         if (withMatrix) stampG(A, r1, r2, g);
         stampI(z, r1, r2, ieq);
         break;
@@ -346,23 +364,24 @@ void TransientSolver::assemble(bool withMatrix) const {
 }
 
 void TransientSolver::factorize() const {
+  const int slot = bdf2Stage_ ? 1 : 0;
   if (workA_.rows() >= kSparseThreshold) {
     workAs_ = workA_.sparseView();
-    workSlu_.factorize(workAs_);
-    if (workSlu_.info() != Eigen::Success) {
+    workSlu_[slot].factorize(workAs_);
+    if (workSlu_[slot].info() != Eigen::Success) {
       throw std::runtime_error(
           "singular MNA matrix (check topology: floating node or V-source loop?)");
     }
     return;
   }
-  workLu_.compute(workA_);
+  workLu_[slot].compute(workA_);
   // Singularity guard: MNA structural singularities (floating nodes,
   // V-source loops) make a U pivot exactly (or relatively) zero.
   // Threshold mirrors FullPivLU::isInvertible semantics: relative to the
   // largest pivot, far below any legitimate stiffness (Ron/Roff ~ 2e8,
   // companion conductances similar scale).
-  const double dmax = workLu_.matrixLU().diagonal().cwiseAbs().maxCoeff();
-  const double dmin = workLu_.matrixLU().diagonal().cwiseAbs().minCoeff();
+  const double dmax = workLu_[slot].matrixLU().diagonal().cwiseAbs().maxCoeff();
+  const double dmin = workLu_[slot].matrixLU().diagonal().cwiseAbs().minCoeff();
   constexpr double kPivotTol = 64.0 * Eigen::NumTraits<double>::epsilon();
   if (!(dmax > 0.0) || dmin <= dmax * kPivotTol) {
     throw std::runtime_error(
@@ -371,11 +390,12 @@ void TransientSolver::factorize() const {
 }
 
 Eigen::VectorXd TransientSolver::solveFactors() const {
+  const int slot = bdf2Stage_ ? 1 : 0;
   if (workA_.rows() >= kSparseThreshold) {
     ++stats_.sparseSolves;
-    return workSlu_.solve(workZ_);
+    return workSlu_[slot].solve(workZ_);
   }
-  return workLu_.solve(workZ_);
+  return workLu_[slot].solve(workZ_);
 }
 
 Eigen::VectorXd TransientSolver::solveLinear() const {
@@ -400,6 +420,7 @@ inline std::uint64_t dblBits(double v) {
 TransientSolver::MatrixSig TransientSolver::matrixSig() const {
   std::uint64_t h = 1469598103934665603ULL;
   hashWord(h, dblBits(dt_));
+  hashWord(h, bdf2Stage_ ? 1ULL : 0ULL);  // stage 2 shares dt_ but not A
   const auto& devs = circuit_.devices();
   hashWord(h, static_cast<std::uint64_t>(devs.size()));
   for (const auto& d : devs) {
@@ -446,15 +467,16 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
 
 void TransientSolver::assembleCached() const {
   const MatrixSig s = matrixSig();
-  if (cacheValid_ && s == cachedSig_) {
+  const int slot = bdf2Stage_ ? 1 : 0;
+  if (cacheValid_[slot] && s == cachedSig_[slot]) {
     assemble(false);
     ++stats_.factorSkips;
     return;
   }
   assemble(true);
   factorize();
-  cachedSig_ = s;
-  cacheValid_ = true;
+  cachedSig_[slot] = s;
+  cacheValid_[slot] = true;
 }
 
 bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
@@ -494,57 +516,79 @@ bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
   return changed;
 }
 
-void TransientSolver::updateHistories(const Eigen::VectorXd& x) {
+void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
+  const bool mid = (how == HistHow::TrapMid);
+  const bool bdf2 = (how == HistHow::Bdf2Prev);
   auto vRow = [&](int r) -> double { return r < 0 ? 0.0 : x(static_cast<Eigen::Index>(r)); };
   auto& devs = circuit_.mutableDevices();
   for (std::size_t i = 0; i < devs.size(); ++i) {
     auto& d = devs[i];
     const double vNew = vRow(rowA_[i]) - vRow(rowB_[i]);
+    double& vT = mid ? d.v_mid : d.v_prev;
+    double& iT = mid ? d.i_mid : d.i_prev;
     switch (d.type) {
       case DeviceType::Capacitor: {
-        const double g = 2.0 * d.value / dt_;
-        const double iNew = g * vNew - g * d.v_prev - d.i_prev;
-        d.v_prev = vNew;
-        d.i_prev = iNew;
+        double iNew;
+        if (bdf2) {
+          const double G = 3.0 * d.value / dt_;
+          iNew = G * vNew - (4.0 / 3.0) * G * d.v_mid + G * d.v_prev / 3.0;
+        } else {
+          const double g = 2.0 * d.value / dt_;
+          iNew = g * vNew - g * d.v_prev - d.i_prev;
+        }
+        vT = vNew;
+        iT = iNew;
         break;
       }
       case DeviceType::Inductor: {
-        const double g = dt_ / (2.0 * d.value);
-        const double iNew = d.i_prev + g * vNew + g * d.v_prev;
-        d.v_prev = vNew;
-        d.i_prev = iNew;
+        double iNew;
+        if (bdf2) {
+          const double G = dt_ / (3.0 * d.value);
+          iNew = (4.0 / 3.0) * d.i_mid - d.i_prev / 3.0 + G * vNew;
+        } else {
+          const double g = dt_ / (2.0 * d.value);
+          iNew = d.i_prev + g * vNew + g * d.v_prev;
+        }
+        vT = vNew;
+        iT = iNew;
         break;
       }
       case DeviceType::Resistor:
       case DeviceType::CurrentSource: {
-        d.v_prev = vNew;
-        d.i_prev = (d.type == DeviceType::Resistor) ? vNew / d.value : d.value;
+        vT = vNew;
+        iT = (d.type == DeviceType::Resistor) ? vNew / d.value : d.value;
         break;
       }
       case DeviceType::Switch: {
         const double r = d.closed ? d.ron : d.roff;
-        const double iBefore = d.i_prev;
-        const bool fell = d.closedPrev && !d.closed;
-        d.v_prev = vNew;
-        d.i_prev = vNew / r + ((d.recT > 0.0 && !d.closed) ? recoveryCurrent(d) : 0.0);
-        if (d.closed) {
-          d.recT = 0.0;  // re-closing cancels any tail
-          d.recI = 0.0;
-        } else if (d.recT > 0.0) {
-          d.recT -= dt_;
-          if (d.recT <= 0.0) {
-            d.recT = 0.0;
+        // Branch current from the pre-update recovery state (matches the
+        // historical evaluation order bit-for-bit on the trap path).
+        const double iNew =
+            vNew / r + ((d.recT > 0.0 && !d.closed) ? recoveryCurrent(d) : 0.0);
+        if (!mid) {
+          const double iBefore = d.i_prev;
+          const bool fell = d.closedPrev && !d.closed;
+          if (d.closed) {
+            d.recT = 0.0;  // re-closing cancels any tail
             d.recI = 0.0;
+          } else if (d.recT > 0.0) {
+            d.recT -= dt_;
+            if (d.recT <= 0.0) {
+              d.recT = 0.0;
+              d.recI = 0.0;
+            }
+          } else if (fell && d.ttail > 0.0 && d.tailk > 0.0 && iBefore != 0.0) {
+            d.recT = 5.0 * d.ttail;
+            d.recI = d.tailk * iBefore;
           }
-        } else if (fell && d.ttail > 0.0 && d.tailk > 0.0 && iBefore != 0.0) {
-          d.recT = 5.0 * d.ttail;
-          d.recI = d.tailk * iBefore;
+          d.closedPrev = d.closed;
         }
-        d.closedPrev = d.closed;
+        vT = vNew;
+        iT = iNew;
         break;
       }
       case DeviceType::Diode: {
-        if (d.recT > 0.0) {
+        if (!mid && d.recT > 0.0) {
           d.v_prev = vNew;
           d.i_prev = recoveryCurrent(d);  // impressed (see assemble)
           d.recT -= dt_;
@@ -555,9 +599,12 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x) {
             d.conducting = false;
             d.recE += d.qrr * std::abs(vNew);
           }
-        } else {
-          d.v_prev = vNew;
-          d.i_prev = d.conducting ? (vNew - d.vf) / d.ron : vNew / d.roff;
+        } else if (!mid || d.recT <= 0.0) {
+          // Mid-capture during recovery: freeze the impressed state into
+          // the midpoint (timers untouched); step state handled above.
+          vT = vNew;
+          iT = (d.recT > 0.0) ? recoveryCurrent(d)
+                              : (d.conducting ? (vNew - d.vf) / d.ron : vNew / d.roff);
         }
         break;
       }
@@ -566,36 +613,62 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x) {
         break;  // branch currents handled below from extra unknowns
       case DeviceType::CoupledInductor: {
         const double det = d.l1 * d.l2 - d.m * d.m;
-        const double f = 0.5 * dt_ / det;
-        const double g11 = f * d.l2;
-        const double g12 = -f * d.m;
-        const double g22 = f * d.l1;
         const double v2New = vRow(rowC_[i]) - vRow(rowD_[i]);
-        const double i1New =
-            g11 * vNew + g12 * v2New + d.i_prev + g11 * d.v_prev + g12 * d.v2_prev;
-        const double i2New =
-            g12 * vNew + g22 * v2New + d.i2_prev + g12 * d.v_prev + g22 * d.v2_prev;
-        d.v_prev = vNew;
-        d.v2_prev = v2New;
-        d.i_prev = i1New;
-        d.i2_prev = i2New;
+        double i1New, i2New;
+        if (bdf2) {
+          const double f = dt_ / (3.0 * det);
+          const double g11 = f * d.l2;
+          const double g12 = -f * d.m;
+          const double g22 = f * d.l1;
+          i1New = (4.0 / 3.0) * d.i_mid - d.i_prev / 3.0 + g11 * vNew + g12 * v2New;
+          i2New = (4.0 / 3.0) * d.i2_mid - d.i2_prev / 3.0 + g12 * vNew + g22 * v2New;
+        } else {
+          const double f = 0.5 * dt_ / det;
+          const double g11 = f * d.l2;
+          const double g12 = -f * d.m;
+          const double g22 = f * d.l1;
+          i1New = g11 * vNew + g12 * v2New + d.i_prev + g11 * d.v_prev + g12 * d.v2_prev;
+          i2New = g12 * vNew + g22 * v2New + d.i2_prev + g12 * d.v_prev + g22 * d.v2_prev;
+        }
+        vT = vNew;
+        iT = i1New;
+        double& v2T = mid ? d.v2_mid : d.v2_prev;
+        double& i2T = mid ? d.i2_mid : d.i2_prev;
+        v2T = v2New;
+        i2T = i2New;
         break;
       }
       case DeviceType::SatInductor: {
         // At Newton convergence newton_ik is the branch current; refresh
         // flux linkage from it for the next step.
         const double ld = satSlope(d.newton_ik, d.value, d.lsat, d.isat);
-        const double g = dt_ / (2.0 * ld);
-        const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
-        const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
-        d.v_prev = vNew;
-        d.i_prev = g * vNew + ieq;
-        d.flux = satFlux(d.i_prev, d.value, d.lsat, d.isat);
-        d.newton_ik = d.i_prev;
+        double iNew;
+        if (bdf2) {
+          const double g = dt_ / (3.0 * ld);
+          const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
+          const double lamMid = satFlux(d.ik_mid, d.value, d.lsat, d.isat);
+          const double ieq =
+              d.newton_ik + ((4.0 / 3.0) * lamMid - d.flux / 3.0 - lam) / ld;
+          iNew = g * vNew + ieq;
+        } else {
+          const double g = dt_ / (2.0 * ld);
+          const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
+          const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
+          iNew = g * vNew + ieq;
+        }
+        vT = vNew;
+        iT = iNew;
+        if (mid) {
+          d.ik_mid = d.newton_ik;  // freeze stage-1 operating point
+        } else {
+          d.flux = satFlux(d.i_prev, d.value, d.lsat, d.isat);
+          d.newton_ik = d.i_prev;
+        }
         break;
       }
     }
   }
+  if (mid) return;  // branch-current unknowns have no midpoint state
   for (std::size_t i = 0; i < devs.size(); ++i) {
     auto& d = devs[i];
     if (d.type == DeviceType::VoltageSource) {
@@ -668,10 +741,20 @@ bool TransientSolver::newtonUpdate(const Eigen::VectorXd& x) {
     if (d.type != DeviceType::SatInductor) continue;
     const double v = vRow(rowA_[i]) - vRow(rowB_[i]);
     const double ld = satSlope(d.newton_ik, d.value, d.lsat, d.isat);
-    const double g = dt_ / (2.0 * ld);
-    const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
-    const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
-    const double inew = g * v + ieq;
+    double inew;
+    if (bdf2Stage_) {
+      const double g = dt_ / (3.0 * ld);
+      const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
+      const double lamMid = satFlux(d.ik_mid, d.value, d.lsat, d.isat);
+      const double ieq =
+          d.newton_ik + ((4.0 / 3.0) * lamMid - d.flux / 3.0 - lam) / ld;
+      inew = g * v + ieq;
+    } else {
+      const double g = dt_ / (2.0 * ld);
+      const double lam = satFlux(d.newton_ik, d.value, d.lsat, d.isat);
+      const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
+      inew = g * v + ieq;
+    }
     if (std::abs(inew - d.newton_ik) > kNewtonAbsTol + kNewtonRelTol * std::abs(inew)) {
       converged = false;
     }
@@ -680,12 +763,13 @@ bool TransientSolver::newtonUpdate(const Eigen::VectorXd& x) {
   return converged;
 }
 
-void TransientSolver::fixedStep(double dtNew) {
-  dt_ = dtNew;
+/// One converged solve at the current dt_/stage: Newton loop for saturable
+/// circuits (full assemble, cache bypassed — the operating point moves),
+/// cached path otherwise; diode iteration inside in both cases.
+void TransientSolver::convergeStep() {
   if (hasNonlinear_) {
-    for (auto& d : circuit_.mutableDevices()) {
+    for (auto& d : circuit_.mutableDevices())
       if (d.type == DeviceType::SatInductor) d.newton_ik = d.i_prev;
-    }
     for (int k = 0; k < kMaxNewtonIters; ++k) {
       assemble(true);
       x_ = solveLinear();
@@ -711,8 +795,35 @@ void TransientSolver::fixedStep(double dtNew) {
       ++stats_.resolves;
     }
   }
+}
+
+void TransientSolver::trBdf2Step(double dtNew) {
+  // Stage 1: trapezoidal half step; histories captured to midpoint state
+  // (timers/flux/edge state untouched — the step hasn't committed).
+  dt_ = dtNew * 0.5;
+  bdf2Stage_ = false;
+  convergeStep();
+  updateHistories(x_, HistHow::TrapMid);
+  // Stage 2: BDF2 full step from frozen midpoint + step-start state.
+  dt_ = dtNew;
+  bdf2Stage_ = true;
+  convergeStep();
+  bdf2Stage_ = false;
   t_ += dt_;
-  updateHistories(x_);
+  updateHistories(x_, HistHow::Bdf2Prev);
+  ++stats_.steps;
+}
+
+void TransientSolver::fixedStep(double dtNew) {
+  dt_ = dtNew;
+  bdf2Stage_ = false;
+  if (integ_ == Integrator::TrBdf2) {
+    trBdf2Step(dtNew);
+    return;
+  }
+  convergeStep();
+  t_ += dt_;
+  updateHistories(x_, HistHow::TrapPrev);
   ++stats_.steps;
 }
 

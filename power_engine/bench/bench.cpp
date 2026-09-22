@@ -119,6 +119,60 @@ Result vienna() {
   return {"vienna-60ms", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
 }
 
+// Same Vienna fixture under TR-BDF2 (own checksum baseline; ~2x solves).
+Result viennaTrBdf2() {
+  constexpr double kVph = 230.0, kF0 = 50.0;
+  const double w = 2.0 * std::numbers::pi * kF0;
+  const double vpk = kVph * std::sqrt(2.0);
+  power_engine::Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.setStopTime(60e-3);
+  eng.setIntegrator(power_engine::Integrator::TrBdf2);
+  eng.circuit().addVoltageSource("VA", 1, 10, 0.0);
+  eng.circuit().addVoltageSource("VB", 2, 10, 0.0);
+  eng.circuit().addVoltageSource("VC", 3, 10, 0.0);
+  eng.circuit().addResistor("RAg", 1, 11, 0.5);
+  eng.circuit().addResistor("RBg", 2, 12, 0.5);
+  eng.circuit().addResistor("RCg", 3, 13, 0.5);
+  eng.circuit().addInductor("LA", 11, 4, 5e-3, 0.0);
+  eng.circuit().addInductor("LB", 12, 5, 5e-3, 0.0);
+  eng.circuit().addInductor("LC", 13, 6, 5e-3, 0.0);
+  eng.circuit().addDiode("DAu", 4, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DBu", 5, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DCu", 6, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DAl", 0, 4, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DBl", 0, 5, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DCl", 0, 6, 0.7, 10e-3, 1e6);
+  eng.circuit().addSwitch("SA", 4, 9, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SB", 5, 9, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SC", 6, 9, 5e-3, 1e6, false);
+  eng.circuit().addCapacitor("C1", 7, 9, 2e-3, 0.0);
+  eng.circuit().addCapacitor("C2", 9, 0, 2e-3, 0.0);
+  eng.circuit().addResistor("Rload", 7, 0, 100.0);
+  const auto t0 = std::chrono::steady_clock::now();
+  eng.start();
+  long steps = 0;
+  double sum = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    const double t = eng.time();
+    const double e =
+        t >= 10e-3 ? 1.0 : 0.5 * (1.0 - std::cos(std::numbers::pi * t / 10e-3));
+    eng.circuit().findDevice("VA").value = e * vpk * std::sin(w * t);
+    eng.circuit().findDevice("VB").value =
+        e * vpk * std::sin(w * t - 2.0 * std::numbers::pi / 3.0);
+    eng.circuit().findDevice("VC").value =
+        e * vpk * std::sin(w * t + 2.0 * std::numbers::pi / 3.0);
+    eng.step();
+    ++steps;
+    sum += eng.currentSolution().probes.at("v:7");
+  }
+  const auto t1 = std::chrono::steady_clock::now();
+  const double ms =
+      std::chrono::duration<double, std::milli>(t1 - t0).count();
+  const auto& st = eng.solverStats();
+  return {"vienna-trbdf2", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+}
+
 // RC ladder scaling probe: N rungs (1k series, 1uF shunt), 2000 steps @
 // 1us, no settling needed — pure per-step scaling signal. N>=~60 crosses
 // into the sparse solver path.
@@ -160,6 +214,7 @@ int main() {
   std::printf("# pe_bench (Release): fixture, steps, wall, us/step, checksum\n");
   report(buck());
   report(vienna());
+  report(viennaTrBdf2());
   for (int n : {10, 40, 160, 320}) report(ladder(n));
   return 0;
 }

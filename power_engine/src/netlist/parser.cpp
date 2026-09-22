@@ -611,12 +611,19 @@ struct Elaborator {
       return;
     }
     if (dir == ".TRAN") {
-      if (toks.size() != 3) fail(line, ".tran needs: .tran dt tstop");
+      if (toks.size() != 3 && toks.size() != 4)
+        fail(line, ".tran needs: .tran dt tstop [TRAP|TRBDF2]");
       out.tran.given = true;
       out.tran.dt = value(toks[1], line);
       out.tran.tstop = value(toks[2], line);
       if (!(out.tran.dt > 0.0) || !(out.tran.tstop > 0.0)) {
         fail(line, ".tran dt and tstop must be positive");
+      }
+      out.tran.method.clear();
+      if (toks.size() == 4) {
+        const std::string m = upper(toks[3]);
+        if (m != "TRAP" && m != "TRBDF2") fail(line, ".tran method must be TRAP or TRBDF2");
+        if (m == "TRBDF2") out.tran.method = m;
       }
       return;
     }
@@ -997,7 +1004,11 @@ std::string NetlistResult::serialize() const {
         break;
     }
   }
-  if (tran.given) os << ".tran " << tran.dt << " " << tran.tstop << "\n";
+  if (tran.given) {
+    os << ".tran " << tran.dt << " " << tran.tstop;
+    if (!tran.method.empty()) os << " " << tran.method;
+    os << "\n";
+  }
   for (const auto& p : pwms) {
     os << ".control pwm switch=" << p.switchName << " freq=" << p.freq << " duty=" << p.duty;
     if (p.deadtime > 0.0) os << " deadtime=" << p.deadtime;

@@ -117,6 +117,8 @@ void Engine::loadNetlist(const std::string& text) {
   if (net_.tran.given) {
     solver_.setStep(net_.tran.dt);
     tStop_ = net_.tran.tstop;
+    solver_.setIntegrator(net_.tran.method == "TRBDF2" ? Integrator::TrBdf2
+                                                       : Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
   refreshSolution();
@@ -140,6 +142,8 @@ void Engine::setParameter(const std::string& name, double value) {
   if (net_.tran.given) {
     solver_.setStep(net_.tran.dt);
     tStop_ = net_.tran.tstop;
+    solver_.setIntegrator(net_.tran.method == "TRBDF2" ? Integrator::TrBdf2
+                                                       : Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
   refreshSolution();
