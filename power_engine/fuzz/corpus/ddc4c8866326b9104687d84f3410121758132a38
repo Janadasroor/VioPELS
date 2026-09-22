@@ -1,7 +1,0 @@
-.param VIN 0.5
-.model SW mosfet_ideal RON=4m ROFF=1Meg EON=10 EOFF=15s
-.model DD diode_ideal VF=0.}}}}möC1ßÎßÏß{VIN}
-S1 1 2 MODEL=SW
-D1 0 2 MODEL=DD
-L1 2 3u1Ccon
-L1 2 3u

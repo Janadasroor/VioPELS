@@ -1,9 +1,0 @@
-.model T1 transformer RATIO=2
-T1 1 2 3 4 MODEL=T1
-W1 1 2 3 4 L1=10m LSAT=5m ISÊT=2
-V1 1 0 10
-R1 4 0 10
-R2 5 0 10
-R3 6 0 10
-.tran 1u 3m
-.end

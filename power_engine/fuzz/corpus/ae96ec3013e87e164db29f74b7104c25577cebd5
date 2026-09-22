@@ -1,3 +1,0 @@
-.param VIN 12 FSW 2 D 0.5
-.model SW mosfet_ideal R=5m FF=15u
-.modmtOr

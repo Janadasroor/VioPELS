@@ -1,6 +1,0 @@
-.param VIN 12 FSW 20k D 0.5
-.model SW mosfet_ideal
-C1Vk 20 D 0.5
-mode DD dSW
-D1.p 0 2 MODCVALEL=DD
-L1 2 a

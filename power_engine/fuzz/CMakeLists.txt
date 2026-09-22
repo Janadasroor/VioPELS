@@ -1,4 +1,7 @@
 # libFuzzer target for the netlist parser. Opt-in: needs Clang.
+# NOTE: extended fuzzing writes new corpus units next to the seeds — run
+# it with a scratch workdir (copy seeds to /tmp) so generated files never
+# land in power_engine/fuzz/corpus. CI uses -runs=0 (no writes).
 #   cmake -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ \\
 #     -DPOWER_ENGINE_BUILD_FUZZ=ON -DPOWER_ENGINE_SANITIZE=address \\
 #     -DPOWER_ENGINE_BUILD_TESTS=OFF -DPOWER_ENGINE_BUILD_EXAMPLES=OFF
