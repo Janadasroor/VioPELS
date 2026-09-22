@@ -66,3 +66,22 @@ jobs:
         run: cmake --build build-ninja
       - name: Test
         run: ctest --test-dir build-ninja --output-on-failure
+
+  install-smoke:
+    name: ubuntu / install + find_package smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen (system package for the consumer path)
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+      - name: Build + install
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release &&
+          cmake --build build -j4 &&
+          cmake --install build --prefix install
+      - name: Consumer via find_package
+        run: >
+          cmake -B smoke-build -S packaging/smoke
+          -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install &&
+          cmake --build smoke-build &&
+          ./smoke-build/consumer

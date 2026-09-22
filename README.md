@@ -1,5 +1,8 @@
 # VioPELS / power_engine — Phases 1–6 + extensions
 
+[![CI](https://github.com/Janadasroor/VioPELS/actions/workflows/ci.yml/badge.svg)](https://github.com/Janadasroor/VioPELS/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Headless C++20 system-level power-electronics engine.
 
 ## Scope
@@ -45,6 +48,7 @@ Ubuntu/Windows/macOS × gcc/clang/MSVC plus an ASan+UBSan job — all green.
 ```
 .param VIN 12 FSW 20k D 0.5
 .model SW mosfet_ideal RON=5m ROFF=1Meg EON=10u EOFF=15u
+.model DD diode_ideal VF=0.0 RON=10m
 V1 1 0 {VIN}
 S1 1 2 MODEL=SW
 D1 0 2 MODEL=DD

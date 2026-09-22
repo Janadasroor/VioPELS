@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(power_engine LANGUAGES CXX)
+project(power_engine VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,11 +80,17 @@ foreach(tgt power_engine power_engine_shared)
   target_include_directories(${tgt} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-  target_link_libraries(${tgt} PRIVATE power_engine_warnings)
+  # Warnings are build-tree-only: PRIVATE deps of static archives would
+  # otherwise propagate -Werror to consumers via the export set.
+  target_link_libraries(${tgt} PRIVATE $<BUILD_INTERFACE:power_engine_warnings>)
   if(Eigen3_FOUND)
     target_link_libraries(${tgt} PUBLIC Eigen3::Eigen)
   else()
-    target_link_libraries(${tgt} PUBLIC eigen)
+    # Build tree uses the FetchContent target; installs resolve Eigen3::Eigen
+    # via power_engineConfig.cmake (system Eigen preferred, bundled headers
+    # as fallback) so the export set never references a build-tree target.
+    target_link_libraries(${tgt} PUBLIC
+      $<BUILD_INTERFACE:eigen> $<INSTALL_INTERFACE:Eigen3::Eigen>)
   endif()
   if(POWER_ENGINE_SANITIZE)
     target_compile_options(${tgt} PUBLIC -fno-omit-frame-pointer -fsanitize=${POWER_ENGINE_SANITIZE})
@@ -93,14 +99,37 @@ foreach(tgt power_engine power_engine_shared)
 endforeach()
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 install(DIRECTORY include/power_engine DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(TARGETS power_engine power_engine_shared
+install(TARGETS power_engine power_engine_shared EXPORT power_engineTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(EXPORT power_engineTargets
+  NAMESPACE PowerEngine::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/power_engine)
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/power_engineConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/power_engineConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/power_engine)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/power_engineConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/power_engineConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/power_engineConfigVersion.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/power_engine)
+if(NOT Eigen3_FOUND)
+  # No system Eigen: bundle the FetchContent headers so the installed
+  # package is self-contained (the config prefers system Eigen first).
+  install(DIRECTORY "${FETCHCONTENT_SOURCE_DIR_EIGEN}/Eigen"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
 
 if(POWER_ENGINE_BUILD_EXAMPLES)
   add_subdirectory(examples)
+  add_subdirectory(bench)
 endif()
 
 if(POWER_ENGINE_BUILD_TESTS)

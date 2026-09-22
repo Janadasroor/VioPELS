@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Consumers need Eigen: prefer system Eigen3, else fall back to the headers
+# bundled with this package (installed only for builds configured without
+# system Eigen, see power_engine/CMakeLists.txt).
+find_package(Eigen3 3.4 QUIET)
+if(NOT Eigen3_FOUND)
+  if(EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@/Eigen/Dense")
+    add_library(Eigen3::Eigen INTERFACE IMPORTED)
+    set_target_properties(Eigen3::Eigen PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
+    set(Eigen3_FOUND TRUE)
+  else()
+    message(FATAL_ERROR "power_engine: Eigen3 not found and no bundled "
+      "headers in this install. Install Eigen 3.4+ (e.g. libeigen3-dev).")
+  endif()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/power_engineTargets.cmake")
+check_required_components(power_engine)
