@@ -228,6 +228,31 @@ Result viennaAuto() {
   return {"vienna-auto", steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
 }
 
+// RC charge under adaptive TR-BDF2 (1ms outer frames, tol 1e-3): the
+// big-stride path — own checksum baseline (different step sequence).
+Result rcAdaptive() {
+  power_engine::Engine eng;
+  eng.setTimeStep(1e-3);
+  eng.setIntegrator(power_engine::Integrator::TrBdf2);
+  eng.setAdaptive(1e-3, 1e-9, 1e-3);
+  eng.circuit().addVoltageSource("V1", 1, 0, 1.0);
+  eng.circuit().addResistor("R1", 1, 2, 1000.0);
+  eng.circuit().addCapacitor("C1", 2, 0, 1e-6, 0.0);
+  eng.setStopTime(5e-3);
+  const auto t0 = std::chrono::steady_clock::now();
+  eng.start();
+  double sum = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.step();
+    sum += eng.currentSolution().probes.at("v:2");
+  }
+  const auto t1 = std::chrono::steady_clock::now();
+  const double ms =
+      std::chrono::duration<double, std::milli>(t1 - t0).count();
+  const auto& st = eng.solverStats();
+  return {"rc-adaptive", st.steps, ms, sum, st.resolves, st.diodeEvents, st.factorSkips};
+}
+
 // RC ladder scaling probe: N rungs (1k series, 1uF shunt), 2000 steps @
 // 1us, no settling needed — pure per-step scaling signal. N>=~60 crosses
 // into the sparse solver path.
@@ -268,6 +293,7 @@ Result ladder(int n) {
 int main() {
   std::printf("# pe_bench (Release): fixture, steps, wall, us/step, checksum\n");
   report(buck());
+  report(rcAdaptive());
   report(vienna());
   report(viennaTrBdf2());
   report(viennaAuto());

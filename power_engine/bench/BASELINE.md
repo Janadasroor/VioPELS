@@ -15,8 +15,9 @@ bitwise identical to the 14b section (pure overhead removal).
 
 ```
 buck-open-6ms      steps=12000   wall=    15.4ms us/step=  1.285 checksum=73604.5196971
+rc-adaptive        steps=124     wall=     0.1ms us/step=  0.903 checksum=4.42202145072
 vienna-60ms        steps=60000   wall=    91.3ms us/step=  1.521 checksum=28383342.7156
-vienna-trbdf2      steps=60000   wall=   127.4ms us/step=  2.123 checksum=28383411.8021
+vienna-trbdf2      steps=60000   wall=   126.6ms us/step=  2.110 checksum=28383411.8021
 vienna-auto        steps=60000   wall=    97.8ms us/step=  1.631 checksum=28383344.3736
 ladder-10          steps=2000    wall=     1.7ms us/step=  0.854 checksum=8534.87986295
 ladder-40          steps=2000    wall=     7.3ms us/step=  3.650 checksum=8534.87986295
@@ -38,6 +39,11 @@ vienna-auto engages BDF2 once (a slow-decaying commutation alternation
 at ~32ms) and returns: same event pattern as trap (41/42), checksum
 within 6e-8, +4.5% wall. Auto never fires on smooth circuits (RC:
 0 switches, bitwise-identical vc).
+
+rc-adaptive (TR-BDF2 + embedded control, 1ms outer frames): 124 solver
+steps vs 5000 fixed for the same 1% RC accuracy. Note the cache barely
+hits here (2 skips): adaptive varies dt almost every step, so there is
+little reuse — cache and adaptivity optimize different regimes.
 
 ## v0.1.0 + factorization cache (14b) + dt-exactness fix
 

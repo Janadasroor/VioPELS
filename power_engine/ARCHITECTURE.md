@@ -281,6 +281,14 @@
     estimates are invalid across step discontinuities (e.g. t=0 source
     application), handled by floor-accept + regrow; fixedStep's dt_
     side effect is fenced by the controller (both debugged, tested).
+    TR-BDF2 uses embedded stage-difference control instead (one converged
+    step per attempt vs three; composes automatically with setAdaptive).
+    Commutations bypass error control in both controllers (measured: err
+    pins at ~1 from dtMax to dtMin across an event straddle — accept at
+    current dt, no shrink ratchet; SPICE-LTE-bypass principle). Singular
+    factorizations inside attempts escalate dt upward (shrinking worsens
+    companion spread) with bounded retries, then rethrow honestly
+    (SingularError, still a runtime_error for existing catch sites).
   - Saturable inductor: λ(i)=Lsat*i+(Lunsat-Lsat)*Isat*tanh(i/Isat),
     Newton loop around the MNA solve (≤25 iters, honest throw on
     non-convergence); netlist `Y` device.

@@ -206,6 +206,76 @@ Rload 3 0 5
   EXPECT_NEAR(vTrap, 6.0, 0.05 * 6.0);
   EXPECT_NEAR(vAuto, vTrap, 0.03 * 6.0);
 }
+// Adaptive TR-BDF2 with the embedded stage-difference estimate: outer
+// frame = dtMax (1ms), the controller subdivides within. Must match
+// analytical within 1% with far fewer than 5000 fixed steps, and the
+// reported estimate must honor its post-accept invariant.
+TEST(TrBdf2, AdaptiveFewStepsAccurate) {
+  Engine eng;
+  eng.setTimeStep(1e-3);
+  eng.setIntegrator(power_engine::Integrator::TrBdf2);
+  eng.setAdaptive(1e-3, 1e-9, 1e-3);
+  eng.circuit().addVoltageSource("V1", 1, 0, 1.0);
+  eng.circuit().addResistor("R1", 1, 2, 1000.0);
+  eng.circuit().addCapacitor("C1", 2, 0, 1e-6, 0.0);
+  eng.setStopTime(5e-3);
+  eng.start();
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 1.0 - std::exp(-5.0), 0.01);
+  EXPECT_LT(eng.solverStats().steps, 1500);
+  EXPECT_GT(eng.solverStats().steps, 5);
+  EXPECT_GE(eng.lastStepError(), 0.0);
+  EXPECT_LE(eng.lastStepError(), 1e-3);
+}
+
+// Adaptive TR-BDF2 on the switching Vienna bridge (1ms outer frames):
+// finishes with correct Vdc in far fewer than 60000 fixed steps.
+TEST(TrBdf2, AdaptiveViennaRuns) {
+  Engine eng;
+  eng.setTimeStep(1e-3);
+  eng.setIntegrator(power_engine::Integrator::TrBdf2);
+  eng.setAdaptive(1e-3, 1e-9, 1e-3);
+  eng.circuit().addVoltageSource("VA", 1, 10, 0.0);
+  eng.circuit().addVoltageSource("VB", 2, 10, 0.0);
+  eng.circuit().addVoltageSource("VC", 3, 10, 0.0);
+  eng.circuit().addResistor("RAg", 1, 11, 0.5);
+  eng.circuit().addResistor("RBg", 2, 12, 0.5);
+  eng.circuit().addResistor("RCg", 3, 13, 0.5);
+  eng.circuit().addInductor("LA", 11, 4, 5e-3, 0.0);
+  eng.circuit().addInductor("LB", 12, 5, 5e-3, 0.0);
+  eng.circuit().addInductor("LC", 13, 6, 5e-3, 0.0);
+  eng.circuit().addDiode("DAu", 4, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DBu", 5, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DCu", 6, 7, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DAl", 0, 4, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DBl", 0, 5, 0.7, 10e-3, 1e6);
+  eng.circuit().addDiode("DCl", 0, 6, 0.7, 10e-3, 1e6);
+  eng.circuit().addSwitch("SA", 4, 9, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SB", 5, 9, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SC", 6, 9, 5e-3, 1e6, false);
+  eng.circuit().addCapacitor("C1", 7, 9, 2e-3, 0.0);
+  eng.circuit().addCapacitor("C2", 9, 0, 2e-3, 0.0);
+  eng.circuit().addResistor("Rload", 7, 0, 100.0);
+  eng.setStopTime(60e-3);
+  eng.start();
+  const double w = 2.0 * std::acos(-1.0) * 50.0;
+  const double vpk = 230.0 * std::sqrt(2.0);
+  double sum = 0.0, n = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    const double t = eng.time();
+    const double e = t >= 10e-3 ? 1.0 : 0.5 * (1.0 - std::cos(std::acos(-1.0) * t / 10e-3));
+    eng.circuit().findDevice("VA").value = e * vpk * std::sin(w * t);
+    eng.circuit().findDevice("VB").value = e * vpk * std::sin(w * t - 2.0943951023931953);
+    eng.circuit().findDevice("VC").value = e * vpk * std::sin(w * t + 2.0943951023931953);
+    eng.step();
+    if (t > 40e-3) {
+      sum += eng.currentSolution().probes.at("v:7");
+      n += 1.0;
+    }
+  }
+  EXPECT_NEAR(sum / n, 540.0, 0.04 * 540.0);
+  EXPECT_LT(eng.solverStats().steps, 60000);
+}
 // Netlist `.tran dt tstop TRBDF2|AUTO`: parses, round-trips, and drives
 // the solver integrator; bad methods throw.
 TEST(TrBdf2, NetlistMethod) {

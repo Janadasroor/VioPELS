@@ -126,6 +126,7 @@ void TransientSolver::rebuildMaps() {
   runPeak_.clear();
   havePrevAuto_ = false;
   cleanSteps_ = 0;
+  lastEmbeddedErr_ = -1.0;
 }
 
 void TransientSolver::initialize() {
@@ -377,7 +378,7 @@ void TransientSolver::factorize() const {
     workAs_ = workA_.sparseView();
     workSlu_[slot].factorize(workAs_);
     if (workSlu_[slot].info() != Eigen::Success) {
-      throw std::runtime_error(
+      throw SingularError(
           "singular MNA matrix (check topology: floating node or V-source loop?)");
     }
     return;
@@ -392,7 +393,7 @@ void TransientSolver::factorize() const {
   const double dmin = workLu_[slot].matrixLU().diagonal().cwiseAbs().minCoeff();
   constexpr double kPivotTol = 64.0 * Eigen::NumTraits<double>::epsilon();
   if (!(dmax > 0.0) || dmin <= dmax * kPivotTol) {
-    throw std::runtime_error(
+    throw SingularError(
         "singular MNA matrix (check topology: floating node or V-source loop?)");
   }
 }
@@ -422,6 +423,14 @@ inline std::uint64_t dblBits(double v) {
   std::uint64_t w = 0;
   std::memcpy(&w, &v, sizeof(w));
   return w;
+}
+// Order-2 step controller factors shared by step-doubling and embedded
+// TR-BDF2 control (exponent 1/3, safety 0.9, clamped).
+inline double growFactor(double tol, double err) {
+  return std::min(2.0, std::max(0.3, 0.9 * std::cbrt(tol / err)));
+}
+inline double shrinkFactor(double tol, double err) {
+  return std::max(0.2, 0.9 * std::cbrt(tol / err));
 }
 }  // namespace
 
@@ -808,10 +817,12 @@ void TransientSolver::convergeStep() {
 void TransientSolver::trBdf2Step(double dtNew) {
   // Stage 1: trapezoidal half step; histories captured to midpoint state
   // (timers/flux/edge state untouched — the step hasn't committed).
+  xStart_ = x_;
   dt_ = dtNew * 0.5;
   bdf2Stage_ = false;
   convergeStep();
   updateHistories(x_, HistHow::TrapMid);
+  xMid_ = x_;
   // Stage 2: BDF2 full step from frozen midpoint + step-start state.
   dt_ = dtNew;
   bdf2Stage_ = true;
@@ -820,6 +831,84 @@ void TransientSolver::trBdf2Step(double dtNew) {
   t_ += dt_;
   updateHistories(x_, HistHow::Bdf2Prev);
   ++stats_.steps;
+}
+
+void TransientSolver::embeddedStep() {
+  // Adaptive TR-BDF2 control with the embedded stage-difference estimate:
+  // linear extrapolation from (start, mid) is first-order at t+dt while
+  // the BDF2 solution is second-order, so their difference is O(dt^2) and
+  // tracks the local error up to a constant the safety factor absorbs.
+  // One converged step per attempt (vs three for step-doubling).
+  int condFails = 0;  // consecutive ill-conditioned attempts (grow to escape)
+  for (int attempt = 0; attempt < 50; ++attempt) {
+    const double dtTry = dt_;
+    const Snapshot s0 = snapshot();
+    const SolverStats base = stats_;
+    try {
+      fixedStep(dtTry);  // trBdf2Step: sets xStart_/xMid_
+    } catch (const SingularError&) {
+      // Shrinking worsens companion spread (C~1/dt vs L~dt); growing
+      // escapes conditioning holes. Truly singular topologies fail at
+      // every dt and rethrow below after a bounded climb.
+      restore(s0);
+      if (++condFails > 5) throw;
+      dt_ = std::min(adaptive_.dtMax, dtTry * 2.0);
+      continue;
+    }
+    condFails = 0;
+    const bool diodesFired = stats_.diodeEvents != base.diodeEvents;
+    double err = 0.0;
+    for (Eigen::Index i = 0; i < x_.size(); ++i) {
+      const double denom = 1e-6 + std::abs(x_[i]);
+      const double e = std::abs(x_[i] - (2.0 * xMid_[i] - xStart_[i])) / denom;
+      if (e > err) err = e;
+    }
+    const bool atFloor = dtTry <= adaptive_.dtMin * (1.0 + 1e-9);
+    if (diodesFired) {
+      // Commutation inside the step: the error estimate is invalid across
+      // discontinuities (measured: err pins at ~1 from dtMax to dtMin —
+      // no dt resolves an event straddle, so shrink-spiralling only ends
+      // at dtMin's ill-conditioned companions and a guard throw). Accept
+      // at current dt unchanged (no shrink ratchet, no growth); accuracy
+      // resumes when quiet. Same principle as SPICE LTE bypass on events.
+      autoUpdate(static_cast<int>(stats_.newtonIters - base.newtonIters),
+                 static_cast<int>(stats_.resolves - base.resolves));
+      lastEmbeddedErr_ = err;  // may exceed tol: documented exception
+      return;
+    }
+    if (err <= adaptive_.tol || atFloor) {
+      autoUpdate(static_cast<int>(stats_.newtonIters - base.newtonIters),
+                 static_cast<int>(stats_.resolves - base.resolves));
+      lastEmbeddedErr_ = err;
+      // Grow unless diodes fired (non-smooth) or the step was floor-forced
+      // by excess error (atFloor with err > tol: hold, don't grow).
+      if (!diodesFired && err > 0.0 && (err <= adaptive_.tol || !atFloor)) {
+        dt_ = std::min(adaptive_.dtMax,
+                       std::max(adaptive_.dtMin, dtTry * growFactor(adaptive_.tol, err)));
+      }
+      return;
+    }
+    restore(s0);  // reject: full revert, shrink and retry
+    dt_ = std::max(adaptive_.dtMin, dtTry * shrinkFactor(adaptive_.tol, err));
+  }
+  // Extremely stiff spot: force-advance at dtMin rather than stall. If
+  // dtMin itself is ill-conditioned (gray-zone companion spread), escalate
+  // upward instead — then rethrow honestly if nothing solves.
+  for (double dtForce = adaptive_.dtMin;;) {
+    const long long r0 = stats_.resolves, n0 = stats_.newtonIters;
+    try {
+      fixedStep(dtForce);
+    } catch (const SingularError&) {
+      if (!(dtForce < adaptive_.dtMax)) throw;
+      dtForce = std::min(adaptive_.dtMax, dtForce * 10.0);
+      continue;
+    }
+    dt_ = dtForce;
+    autoUpdate(static_cast<int>(stats_.newtonIters - n0),
+               static_cast<int>(stats_.resolves - r0));
+    lastEmbeddedErr_ = adaptive_.tol;
+    break;
+  }
 }
 
 void TransientSolver::fixedStep(double dtNew) {
@@ -912,17 +1001,39 @@ void TransientSolver::step() {
                static_cast<int>(stats_.resolves - r0));
     return;
   }
+  if (integ_ == Integrator::TrBdf2) {
+    // Embedded stage-difference control (one converged step per attempt).
+    embeddedStep();
+    return;
+  }
   // Adaptive step-doubling: full step vs two half steps on node voltages.
   // The accepted state is always the (more accurate) half-step one.
+  int condFails = 0;  // consecutive ill-conditioned attempts (grow to escape)
   for (int attempt = 0; attempt < 50; ++attempt) {
     const double dtTry = dt_;
     const Snapshot s0 = snapshot();
-    fixedStep(dtTry);
+    try {
+      fixedStep(dtTry);
+    } catch (const SingularError&) {
+      restore(s0);
+      if (++condFails > 5) throw;
+      dt_ = std::min(adaptive_.dtMax, dtTry * 2.0);
+      continue;
+    }
+    condFails = 0;
     const Eigen::VectorXd xFull = x_;
     restore(s0);
     const SolverStats base = stats_;
-    fixedStep(dtTry * 0.5);
-    fixedStep(dtTry * 0.5);
+    try {
+      fixedStep(dtTry * 0.5);
+      fixedStep(dtTry * 0.5);
+    } catch (const SingularError&) {
+      restore(s0);
+      if (++condFails > 5) throw;
+      dt_ = std::min(adaptive_.dtMax, dtTry * 2.0);
+      continue;
+    }
+    condFails = 0;
     dt_ = dtTry;  // fixedStep() leaves dt_/2 behind; controller owns dt_
     const Eigen::VectorXd xHalf = x_;
     const bool diodesFired = stats_.diodeEvents != base.diodeEvents;
@@ -933,33 +1044,53 @@ void TransientSolver::step() {
       if (e > err) err = e;
     }
     const bool atFloor = dtTry <= adaptive_.dtMin * (1.0 + 1e-9);
+    if (diodesFired) {
+      // Commutation inside the step: the error estimate is invalid across
+      // discontinuities (measured: err pins at ~1 from dtMax to dtMin —
+      // no dt resolves an event straddle, so shrink-spiralling only ends
+      // at dtMin's ill-conditioned companions and a guard throw). Accept
+      // at current dt unchanged (no shrink ratchet, no growth); accuracy
+      // resumes when quiet. Same principle as SPICE LTE bypass on events.
+      autoUpdate(static_cast<int>(stats_.newtonIters - base.newtonIters),
+                 static_cast<int>(stats_.resolves - base.resolves));
+      lastEmbeddedErr_ = err;  // may exceed tol: documented exception
+      stats_.steps = base.steps + 1;  // halves did two steps; count one
+      return;
+    }
     if (err <= adaptive_.tol || atFloor) {
       // Accept half-step state (already committed); fix step counters to
       // count one accepted step with the half-path resolves/events.
       stats_.steps = base.steps + 1;
       autoUpdate(static_cast<int>(stats_.newtonIters - base.newtonIters),
                  static_cast<int>(stats_.resolves - base.resolves));
+      lastEmbeddedErr_ = err;
       // Grow unless diodes fired (non-smooth) or the step was floor-forced
       // by excess error (atFloor with err > tol: hold, don't grow).
       if (!diodesFired && err > 0.0 && (err <= adaptive_.tol || !atFloor)) {
-        const double factor =
-            std::min(2.0, std::max(0.3, 0.9 * std::cbrt(adaptive_.tol / err)));
+        const double factor = growFactor(adaptive_.tol, err);
         dt_ = std::min(adaptive_.dtMax, std::max(adaptive_.dtMin, dtTry * factor));
       }
       return;
     }
     restore(s0);  // reject: full revert, shrink and retry
-    const double factor = std::max(0.2, 0.9 * std::cbrt(adaptive_.tol / err));
+    const double factor = shrinkFactor(adaptive_.tol, err);
     dt_ = std::max(adaptive_.dtMin, dtTry * factor);
   }
-  // Extremely stiff spot: force-advance at dtMin rather than stall.
-  // (State is the last reject's restore, i.e. the attempt entry point.)
-  dt_ = adaptive_.dtMin;
-  {
+  // Extremely stiff spot: force-advance at dtMin rather than stall (see
+  // above: escalate on ill-conditioning, rethrow if nothing solves).
+  for (double dtForce = adaptive_.dtMin;;) {
     const long long r0 = stats_.resolves, n0 = stats_.newtonIters;
-    fixedStep(dt_);
+    try {
+      fixedStep(dtForce);
+    } catch (const SingularError&) {
+      if (!(dtForce < adaptive_.dtMax)) throw;
+      dtForce = std::min(adaptive_.dtMax, dtForce * 10.0);
+      continue;
+    }
+    dt_ = dtForce;
     autoUpdate(static_cast<int>(stats_.newtonIters - n0),
                static_cast<int>(stats_.resolves - r0));
+    break;
   }
 }
 

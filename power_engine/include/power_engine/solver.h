@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <stdexcept>
 #include <string>
 // Eigen is third-party: silence its headers under MSVC /W4 (GCC/Clang use
 // SYSTEM include dirs from CMake; that mechanism doesn't cover MSVC).
@@ -18,6 +19,14 @@
 #include "power_engine/circuit.h"
 
 namespace power_engine {
+
+/// Ill-conditioned/singular MNA factorization failure. Structural causes
+/// (floating nodes, V-source loops) and gray-zone companion spreads at
+/// extreme dt both land here; adaptive controllers distinguish them by
+/// retrying larger dt (conditioning escapes, structure rethrows).
+struct SingularError : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 
 /// Time-integration method for the transient solver. Trapezoidal is the
 /// default (2nd-order, energy-preserving, exact for our validation suite).
@@ -122,6 +131,13 @@ class TransientSolver {
     auto_.enabled = on;
   }
   bool integratorAuto() const { return auto_.enabled; }
+  /// Error estimate of the last accepted adaptive step: embedded
+  /// stage-difference for TR-BDF2, full-vs-half difference for
+  /// step-doubling (-1 when the last step used another path).
+  /// Post-accept invariant on smooth steps: 0 <= estimate <= tol
+  /// (event accepts may exceed tol: the estimate is invalid across
+  /// discontinuities, accepted deliberately like SPICE LTE bypass).
+  double lastStepError() const { return lastEmbeddedErr_; }
 
   /// Reset t=0 and device histories from Device::ic.
   void initialize();
@@ -170,6 +186,8 @@ class TransientSolver {
   void fixedStep(double dtNew);
   /// One TR-BDF2 step of exactly dtNew (no error control). Advances t_.
   void trBdf2Step(double dtNew);
+  /// One adaptive TR-BDF2 step (embedded stage-difference control).
+  void embeddedStep();
   /// One converged solve at the current dt_/stage (Newton + diode loops).
   void convergeStep();
   /// Auto-integrator bookkeeping at step end (no-op unless enabled).
@@ -211,6 +229,9 @@ class TransientSolver {
   Eigen::VectorXd xPrevAuto_;   ///< previous committed solution (auto scan)
   bool havePrevAuto_ = false;
   int cleanSteps_ = 0;
+  Eigen::VectorXd xStart_;      ///< step-start solution (embedded estimate)
+  Eigen::VectorXd xMid_;        ///< half-step solution (embedded estimate)
+  double lastEmbeddedErr_ = -1.0;
   // True during TR-BDF2 stage 2: selects BDF2 companions in assemble() and
   // the BDF2 Newton formula, and salts the factorization signature (stage
   // 2 shares dt_ with trapezoidal steps but stamps a different matrix).

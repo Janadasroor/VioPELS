@@ -44,6 +44,10 @@ class Engine {
   /// default; explicit setIntegrator() wins and disables auto.
   void setIntegratorAuto(bool on) { solver_.setIntegratorAuto(on); }
   Integrator integrator() const { return solver_.integrator(); }
+  /// Error estimate of the last accepted adaptive step
+  /// (-1 when another path took the last step; may exceed tol on steps
+  /// that straddle commutations — accepted deliberately).
+  double lastStepError() const { return solver_.lastStepError(); }
   void setStopTime(double tStop);
   double stopTime() const { return tStop_; }  // 0 = none
   void clearStopTime() { tStop_ = 0.0; }
