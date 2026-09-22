@@ -1,0 +1,4 @@
+.param VIN 12 FSW 20k D 0.5
+model DD di_i VF=m
+V1 1 0 {VIN}
+S1‡‡å‡‡‡‡‡‡3‡‡‡‡‡ 2 2 MDEL=SWd

@@ -1,0 +1,4 @@
+.param VIN 12 FSW 20k D 0.5
+.model SW mosfet_ideal RON=5m ROF=
+=0.01 Tamb=25
+.tr1n 0.5u! 6m

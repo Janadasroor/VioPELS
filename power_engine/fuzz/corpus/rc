@@ -1,0 +1,7 @@
+* RC charging circuit
+.param V0 5 RVAL 1k CVAL 1u
+V1 1 0 {V0}
+R1 1 2 {RVAL}
+C1 2 0 {CVAL} IC=0
+.tran 1u 5m
+.end

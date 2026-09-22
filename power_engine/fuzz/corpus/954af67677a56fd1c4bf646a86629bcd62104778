@@ -1,0 +1,9 @@
+.param VIN 12 FSW 20k D 0.5
+.model SW mosfet_ideal RzON=5m ROFF=1Me200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=S1 freq={FSW} duty={D}
+.thermal foster device=S1 R1=0.5 C1=0.01 Tamb=.5u 6m TRBDF2
+load 3 0 5
+.control pwm switch=S1 freq={FSW} duty={D}
+.thermal.end

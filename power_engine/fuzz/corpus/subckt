@@ -1,0 +1,9 @@
+.subckt DIV IN OUT
+R1 IN OUT 1k
+R2 OUT 0 1k
+.ends
+V1 1 0 5
+X1 1 2 DIV
+R3 2 0 1k
+.tran 1u 10u
+.end

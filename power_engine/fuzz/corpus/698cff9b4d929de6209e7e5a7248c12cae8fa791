@@ -1,0 +1,3 @@
+.param VIN 12 SW 10k D 0.5
+.model SW mosfet_ideal RONÿÿÿÿÿÿÿÿÿÿÿÿÿ=
+.thermal fosterÿÿÿ 6

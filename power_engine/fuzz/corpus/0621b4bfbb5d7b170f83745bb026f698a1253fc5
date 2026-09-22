@@ -1,0 +1,7 @@
+.param VIN 12 FSW 20k D 0.5
+.model SW mosfet_ideal RON=5m ROFF=1 EON=1°u EOF=15u
+.model DD diode_ideal VF=0.0 RON=10m
+V1 t_ideal RONÈ=4m RÝOFF=1.ìsuck D 0.5
+.model SWC1 mosfet_ideal RON=5m ROFF=1 EON=1u
+.model DD diode_ideal VF=0.ode_ideal VF=tosfet_ideal RON=5m ROFF=1 EON=1°u EOF=15u
+.model DD diode_ideal VF=0.0 _ideal RONÈ=4m RÝOFFhOUT

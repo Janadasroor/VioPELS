@@ -1,0 +1,4 @@
+.param VIÀ 12 GSW 209 D 0.5
+.model SW mosfet_ideal RO=5Nmu5u
+.model ˇ‹‹‹‹‹‹‹‹‹‹D diode_ideal VF=09ım
+V1

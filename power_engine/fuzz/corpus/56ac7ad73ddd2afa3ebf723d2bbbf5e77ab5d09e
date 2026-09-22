@@ -1,0 +1,12 @@
+.param VIN 12 FSW 20k D 0.5
+.model SW mosfet_ideal RON=5m ROFM=egEF1 ON=1°u EOFF=15u
+.model DD diode_ideal VF=0.0 RON=10m
+V1 1 0 {VIN}
+S1 1 2 MODEL=SW
+D1 0 2 MODEL=DD
+L2 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm ÿÿswitch=S1 freq={FSW} duty={D foster vice=­Ê C1=0.01 Tamb=25
+.tran 0.5u 6m TRBDF2
+.end

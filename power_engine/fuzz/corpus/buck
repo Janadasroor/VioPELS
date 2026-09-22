@@ -1,0 +1,13 @@
+.param VIN 12 FSW 20k D 0.5
+.model SW mosfet_ideal RON=5m ROFF=1Meg EON=10u EOFF=15u
+.model DD diode_ideal VF=0.0 RON=10m
+V1 1 0 {VIN}
+S1 1 2 MODEL=SW
+D1 0 2 MODEL=DD
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=S1 freq={FSW} duty={D}
+.thermal foster device=S1 R1=0.5 C1=0.01 Tamb=25
+.tran 0.5u 6m TRBDF2
+.end

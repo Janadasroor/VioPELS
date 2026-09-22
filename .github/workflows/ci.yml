@@ -99,3 +99,23 @@ jobs:
           cmake --build build -j4 --target netlist_buck_demo vienna_demo
       - name: Run xval (fails on bound violation)
         run: python3 power_engine/xval/xval.py --build-dir build
+
+  fuzz-corpus:
+    name: ubuntu-clang / fuzz corpus (ASan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+      - name: Configure (Clang + ASan + fuzz target only)
+        run: >
+          cmake -B build-fuzz -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=Debug
+          -DPOWER_ENGINE_BUILD_FUZZ=ON
+          -DPOWER_ENGINE_SANITIZE=address
+          -DPOWER_ENGINE_BUILD_TESTS=OFF
+          -DPOWER_ENGINE_BUILD_EXAMPLES=OFF
+      - name: Build fuzz target
+        run: cmake --build build-fuzz --target fuzz_netlist -j4
+      - name: Run seed corpus (deterministic, fails on crash/UB)
+        run: ./build-fuzz/power_engine/fuzz/fuzz_netlist power_engine/fuzz/corpus -max_len=1024 -runs=0

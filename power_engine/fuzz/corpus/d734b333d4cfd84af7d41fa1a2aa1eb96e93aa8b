@@ -1,0 +1,6 @@
+.param VIN 12 FSW 20k D 05
+.model SW mosfet_ideal RON=ööööööööö
+V1 1 0 {VIN}
+S1 1 2 MODEL=SW
+D1” 02 6m TTTA$F2
+.a°m

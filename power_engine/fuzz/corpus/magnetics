@@ -1,0 +1,10 @@
+.model T1 transformer RATIO=2
+T1 1 2 3 4 MODEL=T1
+W1 1 2 3 4 L1=1m L2=1m K=0.9
+Y1 5 6 LUNSAT=100m LSAT=5m ISAT=2
+V1 1 0 10
+R1 4 0 10
+R2 5 0 10
+R3 6 0 10
+.tran 1u 1m
+.end

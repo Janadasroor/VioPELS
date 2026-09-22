@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(POWER_ENGINE_BUILD_TESTS "Build tests" ON)
 option(POWER_ENGINE_BUILD_EXAMPLES "Build examples" ON)
+option(POWER_ENGINE_BUILD_FUZZ "Build libFuzzer parser target (needs Clang)" OFF)
 # Sanitizers for CI/local verification: -DPOWER_ENGINE_SANITIZE=address,undefined
 set(POWER_ENGINE_SANITIZE "" CACHE STRING "Sanitizers to enable (address,undefined,thread)")
 
@@ -130,6 +131,10 @@ endif()
 if(POWER_ENGINE_BUILD_EXAMPLES)
   add_subdirectory(examples)
   add_subdirectory(bench)
+endif()
+
+if(POWER_ENGINE_BUILD_FUZZ)
+  add_subdirectory(fuzz)
 endif()
 
 if(POWER_ENGINE_BUILD_TESTS)

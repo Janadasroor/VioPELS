@@ -1,0 +1,14 @@
+.subckt DIV IN OUT
+R1ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ”ÿ IN OUT 1k
+.param VIN 12 FSWk 20 D 0.5
+mode DD dSW
+D1.param VIN 12ZZZZZZZZZZZZZZZZZZZZZZZZZ
+.ends
+V1 1 0 5
+X1 1 2 DIV
+Rÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ”ÿ IN OUT 1k
+.param VIN 12 FSWk 20 D 0.5
+mode DD dSW
+D1.param3 2 0 1k
+.tran 1u 10u
+.end

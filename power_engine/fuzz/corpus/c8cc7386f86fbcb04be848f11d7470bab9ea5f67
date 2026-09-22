@@ -1,0 +1,2 @@
+.param VIN1 2 FSW 0k D 0.5
+.model SW mosfet_ideal RONÈ=5m nd
