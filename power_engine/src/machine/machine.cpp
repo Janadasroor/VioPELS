@@ -11,6 +11,13 @@ namespace {
 
 constexpr double kPi = std::numbers::pi;
 
+// Guarded positive value for divisor positions (also silences MSVC's
+// potential-divide-by-zero heuristic on motor parameters).
+double reqPos(double v, const char* what) {
+  if (!(v > 0.0) || !std::isfinite(v)) throw std::runtime_error(what);
+  return v;
+}
+
 }  // namespace
 
 void stepMechanical(MechanicalState& st, double te, double tload,
@@ -189,22 +196,35 @@ FocController::FocController() : FocController(FocParams{}) {}
 FocController::FocController(const FocParams& p)
     : p_(p),
       speedPi_(p.speedKp, p.speedKi, 0.0, p.speedMaxIq),
-      pid_(2.0 * kPi * p.currentBandwidthHz * p.motor.ld,
-           2.0 * kPi * p.currentBandwidthHz * p.motor.ld * p.motor.rs / p.motor.ld,
+      pid_(2.0 * kPi * reqPos(p.currentBandwidthHz, "FOC needs bandwidth > 0") *
+               reqPos(p.motor.ld, "FOC needs Ld > 0"),
+           2.0 * kPi * p.currentBandwidthHz * p.motor.rs,
            -p.vdc / 2.0, p.vdc / 2.0),
-      piq_(2.0 * kPi * p.currentBandwidthHz * p.motor.lq,
-           2.0 * kPi * p.currentBandwidthHz * p.motor.lq * p.motor.rs / p.motor.lq,
+      piq_(2.0 * kPi * reqPos(p.currentBandwidthHz, "FOC needs bandwidth > 0") *
+               reqPos(p.motor.lq, "FOC needs Lq > 0"),
+           2.0 * kPi * p.currentBandwidthHz * p.motor.rs,
            -p.vdc / 2.0, p.vdc / 2.0),
-      pwm_{control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric),
+      pwm_{control::Pwm(reqPos(p.carrierFreq, "FOC needs carrier freq > 0"), 0.0, 0.0,
+                        control::Carrier::Symmetric),
            control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric),
-           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric)} {}
+           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric)} {
+  reqPos(p.vdc, "FOC needs Vdc > 0");
+  if (p.motor.polePairs < 1) throw std::runtime_error("FOC needs polePairs >= 1");
+  reqPos(p.motor.lambdaPm, "FOC needs lambdaPm > 0");
+  if (!(p.motor.rs >= 0.0) || !std::isfinite(p.motor.rs))
+    throw std::runtime_error("FOC needs finite Rs >= 0");
+  if (!(p.speedMaxIq >= 0.0) || !std::isfinite(p.speedMaxIq))
+    throw std::runtime_error("FOC needs finite speedMaxIq >= 0");
+  if (!(p.voltMargin > 0.0) || !std::isfinite(p.voltMargin))
+    throw std::runtime_error("FOC needs finite voltMargin > 0");
+  kTq_ = 1.5 * p.motor.polePairs * p.motor.lambdaPm;  // > 0 by above
+}
 
 FocController::Gates FocController::update(double t, double wRef, double accelFF, double w,
                                            const ThreePhase& i, double thE, double dt) {
   park(i.a, i.b, i.c, thE, id_, iq_);
-  const double kTq = 1.5 * p_.motor.polePairs * p_.motor.lambdaPm;
   iqRef_ = std::min(std::max(speedPi_.update(wRef - w, dt) +
-                                 (p_.motor.mech.j * accelFF + p_.motor.mech.b * wRef) / kTq,
+                                 (p_.motor.mech.j * accelFF + p_.motor.mech.b * wRef) / kTq_,
                              0.0),
                     p_.speedMaxIq);
   const double we = p_.motor.polePairs * w;

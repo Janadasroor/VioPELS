@@ -108,6 +108,7 @@ class FocController {
   control::PiController pid_;
   control::PiController piq_;
   std::array<control::Pwm, 3> pwm_;
+  double kTq_ = 0.0;  // 3/2*p*lambdaPm, validated > 0 in ctor
   double id_ = 0.0, iq_ = 0.0, iqRef_ = 0.0, vd_ = 0.0, vq_ = 0.0;
   ThreePhase duties_;
 };

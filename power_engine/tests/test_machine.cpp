@@ -386,6 +386,24 @@ TEST(PmsmMath, InverseParkRoundTrip) {
                std::runtime_error);
 }
 
+// Degenerate motors are rejected at construction (also silences divide-by-zero
+// diagnostics on divisor parameters).
+TEST(PmsmFoc, RejectsBadMotor) {
+  FocParams fp;
+  fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+  const FocController good(fp);
+  (void)good;
+  FocParams bad = fp;
+  bad.motor.ld = 0.0;
+  EXPECT_THROW({ FocController c(bad); (void)c; }, std::runtime_error);
+  bad = fp;
+  bad.motor.lambdaPm = 0.0;
+  EXPECT_THROW({ FocController c(bad); (void)c; }, std::runtime_error);
+  bad = fp;
+  bad.vdc = -1.0;
+  EXPECT_THROW({ FocController c(bad); (void)c; }, std::runtime_error);
+}
+
 // --- Voltage-form FOC: cascaded speed + dq current loops with decoupling,
 // id* = 0, carrier-PWM drive. Same plant and load profile as the
 // hysteretic speed test, plus field-orientation and reference tracking.
