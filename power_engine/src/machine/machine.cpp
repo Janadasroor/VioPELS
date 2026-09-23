@@ -207,7 +207,8 @@ FocController::FocController(const FocParams& p)
       pwm_{control::Pwm(reqPos(p.carrierFreq, "FOC needs carrier freq > 0"), 0.0, 0.0,
                         control::Carrier::Symmetric),
            control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric),
-           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric)} {
+           control::Pwm(p.carrierFreq, 0.0, 0.0, control::Carrier::Symmetric)},
+      svpwm_(p.carrierFreq) {  // validated above (pwm_) + in Svpwm ctor
   reqPos(p.vdc, "FOC needs Vdc > 0");
   if (p.motor.polePairs < 1) throw std::runtime_error("FOC needs polePairs >= 1");
   reqPos(p.motor.lambdaPm, "FOC needs lambdaPm > 0");
@@ -230,8 +231,13 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
   const double we = p_.motor.polePairs * w;
   double vd = pid_.update(0.0 - id_, dt) - we * p_.motor.lq * iq_;
   double vq = piq_.update(iqRef_ - iq_, dt) + we * (p_.motor.ld * id_ + p_.motor.lambdaPm);
-  // Preserve angle under the linear-modulation ceiling.
-  const double vmax = p_.voltMargin * p_.vdc / 2.0;
+  // Preserve angle under the linear-modulation ceiling: Vdc/2 for carrier
+  // PWM, Vdc/sqrt(3) for SVPWM (~15% more bus). Runtime sqrt: MSVC-hostile
+  // only as constexpr (see Svpwm::sequence).
+  const double half = p_.vdc / 2.0;
+  const double vmax = p_.voltMargin *
+                      (p_.modulation == FocParams::Modulation::Svpwm ? p_.vdc / std::sqrt(3.0)
+                                                                    : half);
   const double m = std::hypot(vd, vq);
   if (m > vmax && m > 0.0) {
     vd *= vmax / m;
@@ -240,7 +246,20 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
   vd_ = vd;
   vq_ = vq;
   const ThreePhase v = inversePark(vd, vq, thE);
-  const double half = p_.vdc / 2.0;
+  if (p_.modulation == FocParams::Modulation::Svpwm) {
+    // Space-vector sequence at the same switching frequency: Clarke the
+    // commanded phase voltages, normalize to Vdc/2 (sequence() units),
+    // and read the symmetric 7-segment states at the intra-period time.
+    const control::AlphaBeta ab = control::clarke(v.a, v.b, v.c);
+    const control::Svpwm::Sequence seq = svpwm_.sequence(ab.alpha / half, ab.beta / half);
+    const double tp = std::fmod(t, svpwm_.period());  // t >= 0 -> [0, T)
+    const control::Svpwm::PhaseState sw =
+        svpwm_.switches(seq.sector, tp, seq.t1, seq.t2, seq.t0);
+    duties_.a = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.a / half)));
+    duties_.b = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.b / half)));
+    duties_.c = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.c / half)));
+    return {sw.a, sw.b, sw.c};
+  }
   duties_.a = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.a / half)));
   duties_.b = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.b / half)));
   duties_.c = std::min(1.0, std::max(0.0, 0.5 * (1.0 + v.c / half)));

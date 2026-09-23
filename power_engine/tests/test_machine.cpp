@@ -485,3 +485,86 @@ TEST(PmsmFoc, SpeedRampLoadStepAndOrientation) {
   EXPECT_NEAR(iqRefMean / nMean, (kB * kWref + kTload) / kTq,
               0.15 * (kB * kWref + kTload) / kTq);
 }
+
+// --- SVPWM-fed FOC variant: identical current loops, symmetric 7-segment
+// space-vector gates at the same switching frequency instead of carrier
+// PWM. Same plant, same ramp + load-step profile, same acceptance bounds.
+TEST(PmsmFocSvpwm, SpeedRampLoadStepAndOrientation) {
+  constexpr double kVdc = 24.0, kP = 2.0, kLam = 0.05, kRs = 0.5, kLs = 2e-3;
+  constexpr double kJ = 5e-5, kB = 5e-4, kDt = 1e-6, kWref = 100.0;
+  constexpr double kTq = 1.5 * kP * kLam;
+  Engine eng;
+  eng.setTimeStep(kDt);
+  eng.circuit().addVoltageSource("Vdc", 7, 0, kVdc);
+  eng.circuit().addSwitch("SAh", 7, 1, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SAl", 1, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SBh", 7, 2, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SBl", 2, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SCh", 7, 3, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SCl", 3, 0, 5e-3, 1e6, true);
+  eng.circuit().addResistor("RA", 1, 4, kRs);
+  eng.circuit().addInductor("LA", 4, 6, kLs, 0.0);
+  eng.circuit().addVoltageSource("EA", 6, 5, 0.0);
+  eng.circuit().addResistor("RB", 2, 10, kRs);
+  eng.circuit().addInductor("LB", 10, 11, kLs, 0.0);
+  eng.circuit().addVoltageSource("EB", 11, 5, 0.0);
+  eng.circuit().addResistor("RC", 3, 12, kRs);
+  eng.circuit().addInductor("LC", 12, 13, kLs, 0.0);
+  eng.circuit().addVoltageSource("EC", 13, 5, 0.0);
+  constexpr double kStop = 300e-3, kStepT = 120e-3, kTload = 0.05;
+  eng.setStopTime(kStop);
+  FocParams fp;
+  fp.motor = {2, kLam, kRs, kLs, kLs, {kJ, kB}};
+  fp.vdc = kVdc;
+  fp.modulation = FocParams::Modulation::Svpwm;
+  FocController foc(fp);
+  const MechanicalParams mech{kJ, kB};
+  MechanicalState rotor{0.0, 0.0};
+  double tload = 0.0;
+  eng.start();
+  double wPre = 0.0, wMin = 1e18, idMean = 0.0, iqMean = 0.0, iqRefMean = 0.0, nMean = 0.0;
+  bool stepped = false;
+  while (eng.status() == SimulationStatus::Running) {
+    const double t = eng.time();
+    if (!stepped && t >= kStepT) {
+      tload = kTload;
+      stepped = true;
+    }
+    const ThreePhase e = pmsmEmf(rotor.theta, rotor.omega, fp.motor);
+    eng.circuit().findDevice("EA").value = e.a;
+    eng.circuit().findDevice("EB").value = e.b;
+    eng.circuit().findDevice("EC").value = e.c;
+    eng.step();
+    const ThreePhase im{eng.deviceCurrent("LA"), eng.deviceCurrent("LB"),
+                        eng.deviceCurrent("LC")};
+    const double wref = std::min(kWref, kWref * t / 50e-3);
+    const double alpha = t < 50e-3 ? kWref / 50e-3 : 0.0;
+    const auto g = foc.update(t, wref, alpha, rotor.omega, im, kP * rotor.theta, kDt);
+    eng.setSwitch("SAh", g.aHi);
+    eng.setSwitch("SAl", !g.aHi);
+    eng.setSwitch("SBh", g.bHi);
+    eng.setSwitch("SBl", !g.bHi);
+    eng.setSwitch("SCh", g.cHi);
+    eng.setSwitch("SCl", !g.cHi);
+    stepMechanical(rotor, pmsmTorque(foc.id(), foc.iq(), fp.motor), tload, mech, kDt);
+    if (t >= 100e-3 && t < kStepT) wPre = rotor.omega;
+    if (t >= kStepT) wMin = std::min(wMin, rotor.omega);
+    if (t >= 260e-3) {
+      idMean += foc.id();
+      iqMean += foc.iq();
+      iqRefMean += foc.iqRef();
+      nMean += 1.0;
+    }
+  }
+  ASSERT_TRUE(stepped);
+  // Setpoint reached before the load step; dip then recovery after.
+  EXPECT_NEAR(wPre, kWref, 0.03 * kWref);
+  EXPECT_LT(wMin, kWref - 2.0);
+  EXPECT_NEAR(rotor.omega, kWref, 0.03 * kWref);
+  // Field orientation: id pinned at zero, iq tracks its reference, and the
+  // reference matches the analytic torque demand.
+  EXPECT_NEAR(idMean / nMean, 0.0, 0.1);
+  EXPECT_NEAR(iqMean / nMean, iqRefMean / nMean, 0.10 * iqRefMean / nMean);
+  EXPECT_NEAR(iqRefMean / nMean, (kB * kWref + kTload) / kTq,
+              0.15 * (kB * kWref + kTload) / kTq);
+}

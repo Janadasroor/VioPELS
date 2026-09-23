@@ -68,7 +68,8 @@ double pmsmTorque(double id, double iq, const PmsmParams& m);
 
 /// Voltage-form field-oriented controller (item 19): cascaded loops
 /// (speed PI -> iq*, dq current PIs + decoupling feedforward -> vd/vq),
-/// id* = 0, carrier-PWM gate output (lo = !hi). Current gains derive from
+/// id* = 0, gate output via carrier PWM or symmetric 7-segment SVPWM
+/// (FocParams::modulation; lo = !hi). Current gains derive from
 /// the motor (crossover target); speed gains default to the validated
 /// reference-motor values. Conditional-integration anti-windup on all
 /// PIs; voltage magnitude clamped preserving angle. Shares plant
@@ -77,6 +78,12 @@ struct FocParams {
   PmsmParams motor;
   double vdc = 24.0;
   double carrierFreq = 20e3;
+  /// Gate modulation: Carrier (3x symmetric PWM from phase duties) or
+  /// Svpwm (symmetric 7-segment space-vector sequence at the same
+  /// carrierFreq; ~15% more bus utilization, linear ceiling Vdc/sqrt(3)
+  /// instead of Vdc/2). Current loops are identical either way.
+  enum class Modulation { Carrier, Svpwm };
+  Modulation modulation = Modulation::Carrier;
   double speedKp = 0.0067;
   double speedKi = 0.22;
   double speedMaxIq = 2.0;  ///< iq* clamp [A], motoring only
@@ -108,6 +115,7 @@ class FocController {
   control::PiController pid_;
   control::PiController piq_;
   std::array<control::Pwm, 3> pwm_;
+  control::Svpwm svpwm_;  // seated to carrierFreq in ctor init-list
   double kTq_ = 0.0;  // 3/2*p*lambdaPm, validated > 0 in ctor
   double id_ = 0.0, iq_ = 0.0, iqRef_ = 0.0, vd_ = 0.0, vq_ = 0.0;
   ThreePhase duties_;

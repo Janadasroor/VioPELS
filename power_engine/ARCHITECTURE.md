@@ -139,8 +139,14 @@
   (timescale-separated explicit coupling, same philosophy as thermal).
   Voltage-form FOC: Clarke (control.h) + inverse Park + FocController
   (speed PI/FF -> iq*, dq PIs + decoupling, id* = 0, carrier PWM,
- validated motor params at construction); ideal theta (no
-  encoder/observer).
+  validated motor params at construction); ideal theta (no
+  encoder/observer). Modulation option (FocParams::modulation): Carrier
+  (3x symmetric PWM, linear ceiling Vdc/2) or Svpwm (symmetric 7-segment
+  space-vector sequence at the same switching frequency — Clarke the
+  commanded phase voltages, normalize to Vdc/2, read states at the
+  intra-period time; linear ceiling Vdc/sqrt(3), ~15% more bus; current
+  loops identical). Both validated on the ramp + load-step profile
+  (track +-3%, dip + recover, id ~ 0, iq tracks ref/demand).
   Hysteretic id=0 drive (self-commutated by construction) with speed PI +
   velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
   be designed against the real loop (sluggish ki fails load recovery,
