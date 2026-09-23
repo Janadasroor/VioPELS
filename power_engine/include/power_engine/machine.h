@@ -87,6 +87,26 @@ struct FocParams {
   double speedKp = 0.0067;
   double speedKi = 0.22;
   double speedMaxIq = 2.0;  ///< iq* clamp [A], motoring only
+  /// Field weakening + MTPA (opt-in, default off = id* identically 0).
+  /// FW is feedforward + feedback on the voltage ellipse with this
+  /// codebase's Park signs (vd carries +we*Lq*iq, vq carries -we*Ld*id):
+  /// a static Rs-inclusive root gives instant bounded bulk action and an
+  /// integrator on (|v_cmd|-0.97*vmax, +-5A authority) trims residuals.
+  /// FW drives id* POSITIVE (which lowers terminal voltage here; textbook
+  /// demag-id* conventions assume the opposite q-handing and fight this
+  /// plant by volts — proven by open-loop plant ID). Above base FW wins
+  /// over MTPA; below base static MTPA (IPM only) applies. Demand never
+  /// leads delivery by more than 2A (cascade yoke). Both refs share the
+  /// current circle (angle-preserving scale). No MTPV iq management
+  /// (follow-up).
+  bool fieldWeakening = false;
+  double maxCurrent = 0.0;  ///< circle limit [A], 0 = follow speedMaxIq
+  /// FW voltage-loop gain [A/(V*s)]: idfb_ integrates (|v_cmd|-0.97*vmax).
+  /// Deliberately slow (~3): the feedforward carries transients, so the
+  /// trim must ride through ramp saturation and only correct steady EMF
+  /// error (a fast trim slams to authority during every hard accel and
+  /// bricks the loop on its own demand).
+  double fwKi = 3.0;
   double currentBandwidthHz = 1500.0;
   double voltMargin = 0.95;  ///< magnitude clamp as fraction of Vdc/2
 };
@@ -105,9 +125,11 @@ class FocController {
   double id() const { return id_; }
   double iq() const { return iq_; }
   double iqRef() const { return iqRef_; }
+  double idRef() const { return idRef_; }
   double vd() const { return vd_; }
   double vq() const { return vq_; }
   ThreePhase duties() const { return duties_; }
+  const PmsmParams& motor() const { return p_.motor; }
 
  private:
   FocParams p_;
@@ -117,7 +139,9 @@ class FocController {
   std::array<control::Pwm, 3> pwm_;
   control::Svpwm svpwm_;  // seated to carrierFreq in ctor init-list
   double kTq_ = 0.0;  // 3/2*p*lambdaPm, validated > 0 in ctor
-  double id_ = 0.0, iq_ = 0.0, iqRef_ = 0.0, vd_ = 0.0, vq_ = 0.0;
+  double id_ = 0.0, iq_ = 0.0, iqRef_ = 0.0, idRef_ = 0.0, vd_ = 0.0, vq_ = 0.0;
+  double idfb_ = 0.0;    // FW voltage-loop integrator (<= 0)
+  double vmagPrev_ = 0.0;  // last step's commanded |v| (FW feedback input)
   ThreePhase duties_;
 };
 

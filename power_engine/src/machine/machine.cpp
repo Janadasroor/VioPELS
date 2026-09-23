@@ -216,6 +216,10 @@ FocController::FocController(const FocParams& p)
     throw std::runtime_error("FOC needs finite Rs >= 0");
   if (!(p.speedMaxIq >= 0.0) || !std::isfinite(p.speedMaxIq))
     throw std::runtime_error("FOC needs finite speedMaxIq >= 0");
+  if (!(p.maxCurrent >= 0.0) || !std::isfinite(p.maxCurrent))
+    throw std::runtime_error("FOC needs finite maxCurrent >= 0");
+  if (!(p.fwKi >= 0.0) || !std::isfinite(p.fwKi))
+    throw std::runtime_error("FOC needs finite fwKi >= 0");
   if (!(p.voltMargin > 0.0) || !std::isfinite(p.voltMargin))
     throw std::runtime_error("FOC needs finite voltMargin > 0");
   kTq_ = 1.5 * p.motor.polePairs * p.motor.lambdaPm;  // > 0 by above
@@ -229,16 +233,89 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
                              0.0),
                     p_.speedMaxIq);
   const double we = p_.motor.polePairs * w;
-  double vd = pid_.update(0.0 - id_, dt) - we * p_.motor.lq * iq_;
-  double vq = piq_.update(iqRef_ - iq_, dt) + we * (p_.motor.ld * id_ + p_.motor.lambdaPm);
-  // Preserve angle under the linear-modulation ceiling: Vdc/2 for carrier
-  // PWM, Vdc/sqrt(3) for SVPWM (~15% more bus). Runtime sqrt: MSVC-hostile
-  // only as constexpr (see Svpwm::sequence).
+  // Mode ceiling first: FW sizes id* against the same budget the final
+  // clamp enforces (Vdc/2 carrier, Vdc/sqrt(3) SVPWM). Runtime sqrt:
+  // MSVC-hostile only as constexpr (see Svpwm::sequence).
   const double half = p_.vdc / 2.0;
   const double vmax = p_.voltMargin *
                       (p_.modulation == FocParams::Modulation::Svpwm ? p_.vdc / std::sqrt(3.0)
                                                                     : half);
+  // Field weakening + MTPA (opt-in; off => id* identically 0, untouched).
+  // Feedforward + feedback split: the static Rs-inclusive voltage ellipse
+  // (vd = Rs*id+we*Lq*iq, vq = Rs*iq-we*Ld*id+we*lam, vd^2+vq^2 <= vmax^2;
+  // B here is the negative of the textbook form — same Park-convention
+  // reason as the decoupling above) gives instant bounded bulk action via
+  // the min-abs root, while a voltage-feedback trim (idfb_ on
+  // |v_cmd|-0.97*vmax, +-5A authority) corrects residuals. FW drives id*
+  // POSITIVE here: under this codebase's Park convention, +id lowers
+  // terminal voltage (plant-ID proven to <1.2%; textbook demag-id*
+  // conventions assume the opposite q-handing and fight the plant by
+  // ~7.5V). Above base speed FW wins over MTPA (voltage constraint
+  // dominates efficiency); below base MTPA alone applies.
+  idRef_ = 0.0;
+  if (p_.fieldWeakening) {
+    const double lam = p_.motor.lambdaPm;
+    const double ld = p_.motor.ld, lq = p_.motor.lq, rs = p_.motor.rs;
+    // MTPA (IPM only; Ld == Lq gives exactly 0): id* for torque optimality.
+    double idmtpa = 0.0;
+    if (lq > ld) {
+      idmtpa = (lam - std::sqrt(lam * lam + 8.0 * (lq - ld) * (lq - ld) * iqRef_ * iqRef_)) /
+               (4.0 * (lq - ld));  // <= 0
+    }
+    // Feedforward: min-abs root of A*id^2+B*id+C (0 when id = 0 fits).
+    const double awe = std::abs(we);
+    const double a = rs * rs + awe * awe * ld * ld;
+    const double b = 2.0 * awe * (rs * lq * iqRef_ - ld * (rs * iqRef_ + awe * lam));
+    const double c = awe * awe * lq * lq * iqRef_ * iqRef_ +
+                     (rs * iqRef_ + awe * lam) * (rs * iqRef_ + awe * lam) - vmax * vmax;
+    double idff = 0.0;
+    if (c > 0.0) {
+      const double disc = b * b - 4.0 * a * c;
+      if (disc >= 0.0) {
+        const double sq = std::sqrt(disc);
+        const double r1 = (-b + sq) / (2.0 * a);
+        const double r2 = (-b - sq) / (2.0 * a);
+        idff = (std::abs(r1) < std::abs(r2)) ? r1 : r2;
+      }
+    }
+    // Feedback trim on residual over-modulation (conditional: rest at 0).
+    // Positive direction: raises id* to pull terminal voltage down.
+    constexpr double kFwTrimAuth = 5.0;  // [A] trim authority
+    const double err = vmagPrev_ - 0.97 * vmax;  // > 0 means over-modulating
+    if (idfb_ > 0.0 || err > 0.0) idfb_ += p_.fwKi * err * dt;
+    if (idfb_ < 0.0) idfb_ = 0.0;
+    if (idfb_ > kFwTrimAuth) idfb_ = kFwTrimAuth;
+    // FW wins above base (idff/idfb_ nonzero); MTPA applies below base.
+    double idFw = idff + idfb_;
+    idRef_ = (idff != 0.0 || idfb_ != 0.0) ? idFw : idmtpa;
+    // No MTPV iq management: beyond-capability operation saturates demand
+    // honestly (follow-up). The yoke below bounds the demand step so a
+    // railed d-PI can never pin vmag high forever.
+    // Cascade demand yoke: never demand more than kFwLead above what the
+    // d-axis actually delivers (keeps vd honest so vmag reflects need).
+    constexpr double kFwLead = 2.0;  // [A]
+    if (idRef_ > id_ + kFwLead) idRef_ = id_ + kFwLead;
+    // Current circle shared by torque + demag (angle-preserving scale).
+    const double lim = p_.maxCurrent > 0.0 ? p_.maxCurrent : p_.speedMaxIq;
+    const double im = std::hypot(idRef_, iqRef_);
+    if (im > lim && im > 0.0) {
+      idRef_ *= lim / im;
+      iqRef_ *= lim / im;
+    }
+  }
+  double vd = pid_.update(idRef_ - id_, dt) + we * p_.motor.lq * iq_;
+  double vq = piq_.update(iqRef_ - iq_, dt) + we * (p_.motor.lambdaPm - p_.motor.ld * id_);
+  // Decoupling signs are load-bearing (refine R-deep-dive 2026-09-23): for
+  // this codebase's park (q from the +sine row), the plant is
+  // vd = Rs*id + we*Lq*iq, vq = Rs*iq - we*Ld*id + we*lam (proven by
+  // finite-difference Park math + live open-loop plant ID to <1.2%),
+  // i.e. OPPOSITE cross terms to Krause leading-q textbooks. Textbook
+  // signs here fight the plant whenever id != 0 (7.5V error at the FW
+  // point) while passing every id = 0 test invisibly (vq term vanishes,
+  // vd error absorbed by the d-PI).
+  // Final protection under the same ceiling FW sized against (above).
   const double m = std::hypot(vd, vq);
+  vmagPrev_ = m;  // next step's FW feedback sees this step's demand
   if (m > vmax && m > 0.0) {
     vd *= vmax / m;
     vq *= vmax / m;

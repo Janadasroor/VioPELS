@@ -568,3 +568,168 @@ TEST(PmsmFocSvpwm, SpeedRampLoadStepAndOrientation) {
   EXPECT_NEAR(iqRefMean / nMean, (kB * kWref + kTload) / kTq,
               0.15 * (kB * kWref + kTload) / kTq);
 }
+
+// --- Field weakening: reference motor on a 48V bus (base ~228 rad/s mech)
+// driven to 260 rad/s. Above base the EMF alone exceeds the bus, so the
+// drive cannot hold setpoint without FW; FW injects positive id* (which
+// lowers terminal voltage under this codebase's Park convention — proven
+// by open-loop plant ID to <1.2%) and holds 97% modulation with all loops
+// tracking. A no-FW contrast run on the same plant stalls at the voltage
+// ceiling, proving the FW does the work.
+// Test-vehicle rationale (all measured): FW needs regulable headroom. On
+// the 24V bus the reference motor needs extreme id* at 98%+ modulation
+// for ANY overspeed and cascaded PIs deadlock there (frozen integrators +
+// angle tilt under the shared clamp). A 50mOhm/20mH variant has leverage
+// but L/R = 0.4s (100x the validated envelope) and never settles inside
+// test horizons. Deep-corner joint anti-windup stays a recorded follow-up.
+TEST(PmsmFocFw, AboveBaseSpeedDemagAndTrack) {
+  constexpr double kVdc = 48.0, kP = 2.0, kLam = 0.05, kRs = 0.5, kLs = 2e-3;
+  constexpr double kJ = 5e-5, kB = 5e-4, kDt = 1e-6, kWref = 260.0;
+  auto build = [](Engine& eng) {
+    eng.setTimeStep(kDt);
+    eng.circuit().addVoltageSource("Vdc", 7, 0, kVdc);
+    eng.circuit().addSwitch("SAh", 7, 1, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("SAl", 1, 0, 5e-3, 1e6, true);
+    eng.circuit().addSwitch("SBh", 7, 2, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("SBl", 2, 0, 5e-3, 1e6, true);
+    eng.circuit().addSwitch("SCh", 7, 3, 5e-3, 1e6, false);
+    eng.circuit().addSwitch("SCl", 3, 0, 5e-3, 1e6, true);
+    eng.circuit().addResistor("RA", 1, 4, kRs);
+    eng.circuit().addInductor("LA", 4, 6, kLs, 0.0);
+    eng.circuit().addVoltageSource("EA", 6, 5, 0.0);
+    eng.circuit().addResistor("RB", 2, 10, kRs);
+    eng.circuit().addInductor("LB", 10, 11, kLs, 0.0);
+    eng.circuit().addVoltageSource("EB", 11, 5, 0.0);
+    eng.circuit().addResistor("RC", 3, 12, kRs);
+    eng.circuit().addInductor("LC", 12, 13, kLs, 0.0);
+    eng.circuit().addVoltageSource("EC", 13, 5, 0.0);
+    eng.setStopTime(800e-3);
+  };
+  auto run = [&](Engine& eng, FocController& foc, const MechanicalParams& mech,
+                 MechanicalState& rotor, double* wMean, double* idMean) {
+    double w = 0.0, id = 0.0, n = 0.0;
+    while (eng.status() == SimulationStatus::Running) {
+      const double t = eng.time();
+      const ThreePhase e = pmsmEmf(rotor.theta, rotor.omega, foc.motor());
+      eng.circuit().findDevice("EA").value = e.a;
+      eng.circuit().findDevice("EB").value = e.b;
+      eng.circuit().findDevice("EC").value = e.c;
+      eng.step();
+      const ThreePhase im{eng.deviceCurrent("LA"), eng.deviceCurrent("LB"),
+                          eng.deviceCurrent("LC")};
+      const double wref = std::min(kWref, kWref * t / 300e-3);
+      const double alpha = t < 300e-3 ? kWref / 300e-3 : 0.0;
+      const auto g = foc.update(t, wref, alpha, rotor.omega, im, kP * rotor.theta, kDt);
+      eng.setSwitch("SAh", g.aHi);
+      eng.setSwitch("SAl", !g.aHi);
+      eng.setSwitch("SBh", g.bHi);
+      eng.setSwitch("SBl", !g.bHi);
+      eng.setSwitch("SCh", g.cHi);
+      eng.setSwitch("SCl", !g.cHi);
+      stepMechanical(rotor, pmsmTorque(foc.id(), foc.iq(), foc.motor()), 0.0, mech,
+                     kDt);
+      if (t >= 600e-3) {
+        w += rotor.omega;
+        id += foc.id();
+        n += 1.0;
+      }
+    }
+    if (wMean) *wMean = w / n;
+    if (idMean) *idMean = id / n;
+  };
+  const MechanicalParams mech{kJ, kB};
+  // Contrast first: no FW stalls at the voltage ceiling (~base speed).
+  double wNoFw = 0.0;
+  {
+    Engine eng;
+    build(eng);
+    FocParams fp;
+    fp.motor = {2, kLam, kRs, kLs, kLs, {kJ, kB}};
+    fp.vdc = kVdc;
+    FocController foc(fp);
+    MechanicalState rotor{0.0, 0.0};
+    eng.start();
+    run(eng, foc, mech, rotor, &wNoFw, nullptr);
+  }
+  EXPECT_LT(wNoFw, 232.0);
+  // With FW: setpoint held at 1.3x base with sustained demagnetization.
+  double wFw = 0.0, idFw = 0.0;
+  {
+    Engine eng;
+    build(eng);
+    FocParams fp;
+    fp.motor = {2, kLam, kRs, kLs, kLs, {kJ, kB}};
+    fp.vdc = kVdc;
+    fp.fieldWeakening = true;
+    fp.maxCurrent = 6.0;
+    FocController foc(fp);
+    MechanicalState rotor{0.0, 0.0};
+    eng.start();
+    run(eng, foc, mech, rotor, &wFw, &idFw);
+    EXPECT_GT(foc.idRef(), 0.0);
+  }
+  EXPECT_NEAR(wFw, kWref, 0.03 * kWref);
+  EXPECT_GT(idFw, 1.0);
+}
+
+// FW/MTPA law corners, pinned without a sim (direct update() calls are
+// deterministic: no engine, no switching, fixed 1us ticks).
+TEST(PmsmFocFw, LawCornersWithoutSim) {
+  const ThreePhase zero{0.0, 0.0, 0.0};
+  // Below base speed (w = 50, we = 100, vlim = 0.114 >> lam): no demag.
+  {
+    FocParams fp;
+    fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+    fp.vdc = 24.0;
+    fp.fieldWeakening = true;
+    FocController foc(fp);
+    for (int k = 0; k < 3000; ++k) foc.update(k * 1e-6, 50.0, 0.0, 50.0, zero, 0.0, 1e-6);
+    EXPECT_EQ(foc.idRef(), 0.0);
+  }
+  // Anti-runaway yoke, pinned open-loop: with no plant response (id held
+  // at 0) demand cannot climb past delivery plus 2A, however saturated the
+  // voltage loop is. Slow trim (200ms at ki = 3) reaches the +-5A authority
+  // here; the yoke, not the authority, sets the pinned demand.
+  {
+    FocParams fp;
+    fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+    fp.vdc = 24.0;
+    fp.fieldWeakening = true;
+    fp.maxCurrent = 30.0;
+    FocController foc(fp);
+    for (int k = 0; k < 200000; ++k)
+      foc.update(k * 1e-6, 1000.0, 0.0, 1000.0, zero, 0.0, 1e-6);
+    EXPECT_DOUBLE_EQ(foc.idRef(), 2.0);
+  }
+  // MTPA below base speed: IPM (Lq > Ld) demagnetizes for torque while the
+  // surface twin (Ld == Lq) holds id* = 0 under the same stimulus. iq comes
+  // from velocity feedforward into already-matching currents (no speed
+  // error, so nothing winds up and the bus stays far from the ceiling).
+  {
+    FocParams ipm;
+    ipm.motor = {2, 0.05, 0.5, 2e-3, 4e-3, {5e-5, 5e-4}};
+    ipm.vdc = 24.0;
+    ipm.fieldWeakening = true;
+    FocController focIpm(ipm);
+    FocParams spm = ipm;
+    spm.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+    FocController focSpm(spm);
+    // iq demand from feedforward only: (J*200+B*50)/kTq = 0.2333A.
+    const ThreePhase i0233 = inversePark(0.0, 0.07 / 0.3, 0.0);
+    for (int k = 0; k < 3000; ++k) {
+      focIpm.update(k * 1e-6, 50.0, 200.0, 50.0, i0233, 0.0, 1e-6);
+      focSpm.update(k * 1e-6, 50.0, 200.0, 50.0, i0233, 0.0, 1e-6);
+    }
+    EXPECT_LT(focIpm.idRef(), -1e-4);  // MTPA active (vbus far from ceiling)
+    EXPECT_DOUBLE_EQ(focSpm.idRef(), 0.0);
+  }
+  // FW disabled: id* identically 0 even with a huge speed error.
+  {
+    FocParams fp;
+    fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+    fp.vdc = 24.0;
+    FocController foc(fp);
+    for (int k = 0; k < 3000; ++k) foc.update(k * 1e-6, 200.0, 0.0, 50.0, zero, 0.0, 1e-6);
+    EXPECT_EQ(foc.idRef(), 0.0);
+  }
+}

@@ -147,6 +147,25 @@
   intra-period time; linear ceiling Vdc/sqrt(3), ~15% more bus; current
   loops identical). Both validated on the ramp + load-step profile
   (track +-3%, dip + recover, id ~ 0, iq tracks ref/demand).
+  Field weakening + MTPA (opt-in FocParams::fieldWeakening, default off):
+  feedforward (static Rs-inclusive ellipse root, instant bounded bulk)
+  + feedback trim (integrator on |v_cmd|-0.97*vmax, +-5A authority),
+  current-circle clamp, cascade demand yoke (demand never leads delivery
+  by more than 2A). Validated: 48V-bus drive holds 260 rad/s (base ~228)
+  with id ~ +4.3 tracking, while the no-FW contrast stalls at the ceiling.
+  CONVENTION LESSON (measured the hard way, do not "fix" to textbooks):
+  for this codebase's park (q from the +sine row), the plant is vd =
+  Rs*id + we*Lq*iq, vq = Rs*iq - we*Ld*id + we*lam — OPPOSITE cross terms
+  to Krause leading-q textbooks (proven by finite-difference Park math +
+  live open-loop plant ID to <1.2%). The FOC decoupling matches the plant
+  as built; textbook signs fight it by volts whenever id != 0 yet pass
+  every id = 0 test invisibly (vq term vanishes, vd error absorbed by the
+  d-PI). Corollary: FW drives id* POSITIVE here (lowers terminal
+  voltage); textbook demag-id* conventions assume the opposite q-handing.
+  Saliency note: the R/L/EMF-source plant has no position-dependent
+  inductance, so reluctance torque is untestable in-sim (measured slope
+  ~1e-4 vs +-6e-3 predicted either way) — MTPA/IPM direction follows the
+  code's torque form + industry standard and is pinned open-loop only.
   Hysteretic id=0 drive (self-commutated by construction) with speed PI +
   velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
   be designed against the real loop (sluggish ki fails load recovery,
