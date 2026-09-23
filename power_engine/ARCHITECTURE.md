@@ -328,3 +328,37 @@
     a parallel Ron would swallow it under reverse bias), switch
     exponential tail; recE=Qrr*|V| booked into losses+thermals at release.
     Fixed-shape approximations (no di/dt dependence), documented.
+- Trust boundaries (refine-roadmap R8 — what is validated vs assumed at
+  each boundary; future modules inherit this discipline: validate
+  untrusted input at the boundary with a throwing message, never silently
+  clamp where physics forbids, never slow the hot loop for checking):
+  - Netlist text → Parser: UNTRUSTED. Any invalid input throws with
+    `netlist line N:`; resource guards (1 MiB input, 64 expression depth,
+    100000-line subckt expansion; linear number lexing). Throws-are-
+    rejection is the libFuzzer contract (corpus in `fuzz/corpus/`).
+  - Public C++ API → Circuit/Engine: validated. Nodes/positivity/
+    finiteness/name-uniqueness at every add (same-node terminals rejected
+    R1; `Roff>Ron`, `0<k<1`, `Lsat<=Lunsat`, `Qrr→Trr`); dt/t/tolerances;
+    lifecycle latches (loadNetlist/setParameter pre-start, runUntil while
+    running); wrong-type access throws. `Circuit::generation()` + the
+    solver's per-step check (R5) refuse mid-run structural change.
+  - Solver internals: ASSUMED, solver-owned. `mutableDevices()` writes
+    (histories/flux/timers/ron/vf), source values (bypass the factor
+    signature), `restoreState` size checks, FNV cache (no-collision
+    assumption), tuned constants (1nV/A diode hysteresis, 64eps pivot,
+    1ns sliver) are trusted by construction — callers must not poke them.
+    Genuine faults throw honestly (`SingularError`, Newton non-
+    convergence); the diode loop accepts the last state after 10 iters
+    and counts it (`diodeCapHits`, ~0 everywhere). Clock re-stamping only
+    via the `rewindTo` sequence (R7: restoreState → setTime → event
+    re-arm → accumulators/probes, proven bitwise-equivalent).
+  - FMI 2.0 C ABI: HOSTILE. GUID/VR/state-machine enforced, unsupported
+    calls honestly `fmi2Error`; engine exceptions never cross the ABI.
+  - Sweep threading: per-point local `Engine` is safe, but setup/measure
+    captures MUST be thread-safe when `jobs!=1` — keep per-point state in
+    thread-locals (R2; the demo is the template) or recompute in measure.
+  - Demo/CSV/Python edges: stringly-typed by design, pinned by contract —
+    `xval.py` FIXTURES names each demo's columns, drift raises naming the
+    side + expected + actual (R6, `--self-check` in CI).
+  - External tools (Eigen/ngspice/zip/xmllint/Clang): single clear failure
+    exits; see refine-roadmap R9 for the unified preflight (open).

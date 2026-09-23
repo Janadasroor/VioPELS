@@ -155,9 +155,13 @@ Gaps found (the refinement backlog §C):
   un-steppable — it now restores `Running` (no-op on the shooting path,
   which never sets `tStop`). No debug assert: histories carry no
   timestamps, and stamping one would cost per-step hot-loop writes. 24/24.
-- [ ] **R8. Trust-boundary doc**: one `ARCHITECTURE.md` section pointing at
-  §A (what is validated vs assumed at each boundary) so future modules
-  inherit the discipline.
+- [x] **R8. Trust-boundary doc** (DONE 2026-09-23): `ARCHITECTURE.md` gained
+  a "Trust boundaries" section in house style — validated-vs-assumed at
+  each of the 7 boundaries (§A) with the future-module discipline
+  (validate untrusted input at the boundary with a throwing message, never
+  silently clamp physics, never slow the hot loop for checking). Docs-only;
+  every claim cross-checked against the shipped R1–R7 behavior. No test or
+  CI job parses ARCHITECTURE (verified by grep).
 - [ ] **R9. Missing-tool UX**: single `tools.py`/shell preflight used by
   xval + FMI scripts (`ngspice/zip/xmllint/eigen/clang` → one clear error
   naming the install, same exit code everywhere).
