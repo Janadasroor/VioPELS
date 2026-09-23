@@ -3,7 +3,9 @@
 #include "power_engine/engine.h"
 
 // Netlist-driven open-loop buck with thermal model (netlist -> engine -> CSV).
-// CSV: time,vout,tj_s1
+// CSV: time,vout,tj_s1 — columns pinned by power_engine/xval/xval.py
+// FIXTURES (cross-validation reads "vout"); do not rename without updating
+// both sides.
 int main() {
   power_engine::Engine eng;
   eng.loadNetlist(R"(

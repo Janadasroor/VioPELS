@@ -5,7 +5,9 @@
 
 // Vienna rectifier (uncontrolled diode-bridge mode) demo: 3x230V/50Hz with
 // floating mains neutral (true 3-wire) through 5mH + 0.5ohm into a diode
-// bridge with split 2mF caps + 100ohm. Prints CSV t,vdc,vphaseA,ia.
+// bridge with split 2mF caps + 100ohm. Prints CSV t,vdc,vphaseA,ia —
+// columns pinned by power_engine/xval/xval.py FIXTURES (cross-validation
+// reads "vdc"); do not rename without updating both sides.
 int main() {
   constexpr double Vph = 230.0, f0 = 50.0, dt = 1e-6;
   const double w = 2.0 * std::acos(-1.0) * f0;

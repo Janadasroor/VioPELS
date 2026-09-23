@@ -131,9 +131,17 @@ Gaps found (the refinement backlog §C):
   same-size structural edits via `mutableDevices()` (solver-owned backdoor)
   and hostile cross-circuit `restoreSolverState` stay unchecked by design.
   24/24 green.
-- [ ] **R6. CSV schema contract**: named `DemoCsv` writer/reader shared by
-  demos + `xval.py` (header assert naming the expected probe, not
-  `ValueError`); xval emits which side drifted.
+- [x] **R6. CSV schema contract** (DONE 2026-09-23): `xval.py` gained a
+  `FIXTURES` table (single source of truth: demo → time/value columns), a
+  hardened `read_demo_csv` (every failure names the side: demo binary +
+  expected column + actual header, with line numbers on ragged/bad rows —
+  never a bare `ValueError`), fixture names on ngspice-side errors, and
+  `--self-check` (6 contract cases, no ngspice/build needed) wired as a CI
+  step ahead of the ngspice run. Both xval demos carry pin comments back to
+  `FIXTURES`. Deliberately no C++ `DemoCsv` writer: it adds no checking
+  power (a rename moves identically); the check lives in the reader +
+  self-check. Verified: self-check 6/6, full xval E2E green (buck 5e-4,
+  Vienna 1.5e-3), real-file drift rename caught with side named, 24/24.
 - [ ] **R7. `setTime` guardrails**: document-or-enforce history/event
   realignment (at minimum: debug-mode assert that histories match `t`).
 - [ ] **R8. Trust-boundary doc**: one `ARCHITECTURE.md` section pointing at

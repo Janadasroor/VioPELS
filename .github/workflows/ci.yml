@@ -97,6 +97,8 @@ jobs:
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release &&
           cmake --build build -j4 --target netlist_buck_demo vienna_demo
+      - name: xval self-check (CSV contract, no ngspice needed)
+        run: python3 power_engine/xval/xval.py --self-check
       - name: Run xval (fails on bound violation)
         run: python3 power_engine/xval/xval.py --build-dir build
 
