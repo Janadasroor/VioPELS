@@ -53,3 +53,7 @@ coverage/
 perf.data
 perf.data.old
 gmon.out
+
+# Python bytecode (xval tooling)
+__pycache__/
+*.pyc
