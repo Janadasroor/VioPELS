@@ -175,7 +175,11 @@
   state with carrier-midpoint-sampled currents (held between ticks):
   track +-5% (measured +2% integrator-drain lag, not estimator bias —
   the estimator itself is unbiased to 0.01 rad/s), dip + recover, id ~ 0,
-  iq tracks. Sensorless (EMF observer, no encoder) deferred.
+  iq tracks. Sensorless DONE: voltage-model stator-flux observer
+  (magnitude feedback kills drift) + 2nd-order PLL, honest I-f startup
+  with speed-scheduled handoff — same Item-19 profile within the same
+  +-5% bounds, flux at λm, angle < 5° elec; +π fold load-bearing (EMF
+  sine convention).
   Hysteretic id=0 drive (self-commutated by construction) with speed PI +
   velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
   be designed against the real loop (sluggish ki fails load recovery,

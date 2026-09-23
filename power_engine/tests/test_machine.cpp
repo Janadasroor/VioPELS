@@ -848,3 +848,119 @@ TEST(PmsmFocFw, MtpvDeratesTorqueDeterministically) {
   // ...while id demand sits at the yoke pin (no bricking, no windup).
   EXPECT_DOUBLE_EQ(foc.idRef(), 2.0);
 }
+
+// Closed-loop sensorless FOC: no Encoder/SpeedEstimator anywhere — the
+// voltage-model observer (commanded v + sampled i) supplies angle/speed.
+// Honest I-f startup: forced frame θf ramps to speed, then a
+// speed-scheduled blend hands the loop to θ̂e (handoff uses only θf_dot
+// + observer flux, never the true rotor angle).
+TEST(PmsmFocSensorless, SpeedRampLoadStepAndOrientation) {
+  constexpr double kVdc = 24.0, kP = 2.0, kLam = 0.05, kRs = 0.5, kLs = 2e-3;
+  constexpr double kJ = 5e-5, kB = 5e-4, kDt = 1e-6, kWref = 100.0;
+  constexpr double kTq = 1.5 * kP * kLam;
+  constexpr double kTcar = 50e-6;
+  constexpr double kRampA = 1000.0;    // I-f ramp [rad/s^2], reaches kWref at 100ms
+  constexpr double kBlend0 = 100e-3;   // blend start [s]
+  constexpr double kBlend1 = 200e-3;   // blend end (pure sensorless after) [s]
+  Engine eng;
+  eng.setTimeStep(kDt);
+  eng.circuit().addVoltageSource("Vdc", 7, 0, kVdc);
+  eng.circuit().addSwitch("SAh", 7, 1, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SAl", 1, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SBh", 7, 2, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SBl", 2, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SCh", 7, 3, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SCl", 3, 0, 5e-3, 1e6, true);
+  eng.circuit().addResistor("RA", 1, 4, kRs);
+  eng.circuit().addInductor("LA", 4, 6, kLs, 0.0);
+  eng.circuit().addVoltageSource("EA", 6, 5, 0.0);
+  eng.circuit().addResistor("RB", 2, 10, kRs);
+  eng.circuit().addInductor("LB", 10, 11, kLs, 0.0);
+  eng.circuit().addVoltageSource("EB", 11, 5, 0.0);
+  eng.circuit().addResistor("RC", 3, 12, kRs);
+  eng.circuit().addInductor("LC", 12, 13, kLs, 0.0);
+  eng.circuit().addVoltageSource("EC", 13, 5, 0.0);
+  constexpr double kStop = 500e-3, kStepT = 320e-3, kTload = 0.05;
+  eng.setStopTime(kStop);
+  FocParams fp;
+  fp.motor = {2, kLam, kRs, kLs, kLs, {kJ, kB}};
+  fp.vdc = kVdc;
+  FocController foc(fp);
+  const MechanicalParams mech{kJ, kB};
+  MechanicalState rotor{0.0, 0.0};
+  power_engine::sensing::SensorlessParams sp;
+  sp.rs = kRs;
+  sp.l = kLs;
+  sp.lambdaPm = kLam;
+  power_engine::sensing::SensorlessObserver obs(sp);
+  double tload = 0.0;
+  eng.start();
+  ThreePhase im{0.0, 0.0, 0.0};
+  double thF = 0.0, wF = 0.0;  // forced frame (I-f)
+  double nextSamp = kTcar / 2.0;
+  double thUse = 0.0, wUse = 0.0, thVolt = 0.0;
+  double wPre = 0.0, wMin = 1e18, idMean = 0.0, iqMean = 0.0, iqRefMean = 0.0;
+  double fxMean = 0.0, angErrMean = 0.0, nMean = 0.0;
+  bool stepped = false;
+  while (eng.status() == SimulationStatus::Running) {
+    const double t = eng.time();
+    if (!stepped && t >= kStepT) {
+      tload = kTload;
+      stepped = true;
+    }
+    // Forced-frame schedule (analytic, sensorless-legal inputs only).
+    wF = std::min(kWref, kRampA * t);
+    thF += wF * kDt;
+    const double beta =
+        std::min(std::max((t - kBlend0) / (kBlend1 - kBlend0), 0.0), 1.0);
+    const ThreePhase e = pmsmEmf(rotor.theta, rotor.omega, fp.motor);
+    eng.circuit().findDevice("EA").value = e.a;
+    eng.circuit().findDevice("EB").value = e.b;
+    eng.circuit().findDevice("EC").value = e.c;
+    eng.step();
+    if (t + kDt >= nextSamp) {  // midpoint sample, held between ticks
+      im = {eng.deviceCurrent("LA"), eng.deviceCurrent("LB"), eng.deviceCurrent("LC")};
+      const ThreePhase vv = inversePark(foc.vd(), foc.vq(), thVolt);
+      const auto va = power_engine::control::clarke(vv.a, vv.b, vv.c);
+      const auto ia = power_engine::control::clarke(im.a, im.b, im.c);
+      obs.update(va.alpha, va.beta, ia.alpha, ia.beta, kTcar);
+      nextSamp += kTcar;
+    }
+    const double wref = beta < 1.0 ? wF : kWref;
+    const double alpha = (beta < 1.0 && wF < kWref) ? kRampA : 0.0;
+    thUse = (1.0 - beta) * kP * thF + beta * obs.thetaE();
+    wUse = (1.0 - beta) * wF + beta * obs.omegaE() / kP;
+    const auto g = foc.update(t, wref, alpha, wUse, im, thUse, kDt);
+    thVolt = thUse;
+    eng.setSwitch("SAh", g.aHi);
+    eng.setSwitch("SAl", !g.aHi);
+    eng.setSwitch("SBh", g.bHi);
+    eng.setSwitch("SBl", !g.bHi);
+    eng.setSwitch("SCh", g.cHi);
+    eng.setSwitch("SCl", !g.cHi);
+    stepMechanical(rotor, pmsmTorque(foc.id(), foc.iq(), fp.motor), tload, mech, kDt);
+    if (t >= 300e-3 && t < kStepT) wPre = rotor.omega;
+    if (t >= kStepT) wMin = std::min(wMin, rotor.omega);
+    if (t >= 460e-3) {
+      idMean += foc.id();
+      iqMean += foc.iq();
+      iqRefMean += foc.iqRef();
+      fxMean += obs.fluxMag();
+      double ae = std::fmod(obs.thetaE() - kP * rotor.theta + kPi, 2.0 * kPi);
+      if (ae < 0.0) ae += 2.0 * kPi;
+      angErrMean += std::abs(ae - kPi);
+      nMean += 1.0;
+    }
+  }
+  ASSERT_TRUE(stepped);
+  EXPECT_NEAR(wPre, kWref, 0.05 * kWref);
+  EXPECT_LT(wMin, kWref - 2.0);
+  EXPECT_NEAR(rotor.omega, kWref, 0.05 * kWref);
+  EXPECT_NEAR(idMean / nMean, 0.0, 0.15);
+  EXPECT_NEAR(iqMean / nMean, iqRefMean / nMean, 0.10 * iqRefMean / nMean);
+  EXPECT_NEAR(iqRefMean / nMean, (kB * kWref + kTload) / kTq,
+              0.15 * (kB * kWref + kTload) / kTq);
+  // Observer locked: flux at λm, angle on truth.
+  EXPECT_NEAR(fxMean / nMean, kLam, 0.10 * kLam);
+  EXPECT_LT(angErrMean / nMean, 0.09);  // < ~5 deg electrical
+}

@@ -95,3 +95,84 @@ TEST(SpeedEstimator, ToleratesQuantization) {
   }
   EXPECT_NEAR(est.omega(), 100.0, 0.05 * 100.0);
 }
+
+using power_engine::sensing::SensorlessObserver;
+using power_engine::sensing::SensorlessParams;
+
+TEST(SensorlessObserver, RejectsBadParams) {
+  SensorlessParams ok;
+  ok.rs = 0.5;
+  ok.l = 2e-3;
+  ok.lambdaPm = 0.05;
+  EXPECT_NO_THROW(SensorlessObserver{ok});
+  SensorlessParams bad = ok;
+  bad.l = 0.0;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  bad = ok;
+  bad.lambdaPm = -0.01;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  bad = ok;
+  bad.rs = -1.0;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  bad = ok;
+  bad.fluxTau = 0.0;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  bad = ok;
+  bad.pllBandwidthHz = 0.0;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  bad = ok;
+  bad.pllDamping = -0.5;
+  EXPECT_THROW(SensorlessObserver{bad}, std::runtime_error);
+  SensorlessObserver o(ok);
+  EXPECT_THROW(o.update(1.0, 0.0, 0.0, 0.0, 0.0), std::runtime_error);
+  EXPECT_THROW(o.update(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0, 0.0, 1e-6),
+               std::runtime_error);
+}
+
+// Synthetic back-EMF at known angle, zero current: v = dλr/dt with
+// λr = -λm*(cos θe, sin θe) (the EMF sine convention, see header). The
+// observer must lock θ̂e -> θe (pins the +π fold) with ω̂e -> ωe.
+TEST(SensorlessObserver, TracksSyntheticEmf) {
+  SensorlessParams p;
+  p.rs = 0.5;
+  p.l = 2e-3;
+  p.lambdaPm = 0.05;
+  SensorlessObserver o(p);
+  constexpr double kWe = 200.0, kDt = 50e-6, kA = kWe * 0.05;
+  double errMean = 0.0, omMean = 0.0, fxMean = 0.0, n = 0.0;
+  for (int k = 0; k < 6000; ++k) {
+    const double t = k * kDt;
+    o.update(kA * std::sin(kWe * t), -kA * std::cos(kWe * t), 0.0, 0.0, kDt);
+    if (t >= 0.25) {
+      double e = std::fmod(o.thetaE() - kWe * t + kPi, 2.0 * kPi);
+      if (e < 0.0) e += 2.0 * kPi;
+      e -= kPi;
+      errMean += std::abs(e);
+      omMean += o.omegaE();
+      fxMean += o.fluxMag();
+      n += 1.0;
+    }
+  }
+  EXPECT_LT(errMean / n, 0.035);  // < 2 deg electrical
+  EXPECT_NEAR(omMean / n, kWe, 0.01 * kWe);
+  EXPECT_NEAR(fxMean / n, 0.05, 0.02 * 0.05);
+}
+
+// Standstill (no EMF): nothing to observe — must stay bounded and report
+// flux ~ 0 (the caller's I-f cue), never NaN.
+TEST(SensorlessObserver, StandstillBlindButBounded) {
+  SensorlessParams p;
+  p.rs = 0.5;
+  p.l = 2e-3;
+  p.lambdaPm = 0.05;
+  SensorlessObserver o(p);
+  for (int k = 0; k < 2000; ++k) o.update(0.0, 0.0, 0.0, 0.0, 50e-6);
+  EXPECT_TRUE(std::isfinite(o.thetaE()));
+  EXPECT_TRUE(std::isfinite(o.omegaE()));
+  EXPECT_DOUBLE_EQ(o.fluxMag(), 0.0);
+  // PLL parks on the arbitrary folded angle with ~zero speed (settled
+  // transient, not information): still blind, but bounded.
+  EXPECT_NEAR(o.omegaE(), 0.0, 1e-6);
+  o.reset();
+  EXPECT_DOUBLE_EQ(o.thetaE(), 0.0);
+}

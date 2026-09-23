@@ -77,5 +77,65 @@ double SpeedEstimator::update(double thetaQuant, double t) {
   return omega_;
 }
 
+// Wrap any angle difference to [-pi, pi).
+double wrapPi(double d) {
+  double w = std::fmod(d + std::numbers::pi, kTwoPi);
+  if (w < 0.0) w += kTwoPi;
+  return w - std::numbers::pi;
+}
+
+SensorlessObserver::SensorlessObserver(const SensorlessParams& p)
+    : rs_(p.rs), l_(p.l), lam_(p.lambdaPm) {
+  if (!std::isfinite(p.rs) || p.rs < 0.0)
+    throw std::runtime_error("sensorless observer needs rs finite >= 0");
+  if (!(p.l > 0.0) || !std::isfinite(p.l))
+    throw std::runtime_error("sensorless observer needs l finite > 0");
+  if (!(p.lambdaPm > 0.0) || !std::isfinite(p.lambdaPm))
+    throw std::runtime_error("sensorless observer needs lambdaPm finite > 0");
+  if (!(p.fluxTau > 0.0) || !std::isfinite(p.fluxTau))
+    throw std::runtime_error("sensorless observer needs fluxTau finite > 0");
+  if (!(p.pllBandwidthHz > 0.0) || !std::isfinite(p.pllBandwidthHz))
+    throw std::runtime_error("sensorless observer needs pllBandwidthHz finite > 0");
+  if (!(p.pllDamping > 0.0) || !std::isfinite(p.pllDamping))
+    throw std::runtime_error("sensorless observer needs pllDamping finite > 0");
+  gamma_ = 1.0 / (2.0 * p.lambdaPm * p.lambdaPm * p.fluxTau);
+  const double wn = kTwoPi * p.pllBandwidthHz;
+  pllKp_ = 2.0 * p.pllDamping * wn;
+  pllKi_ = wn * wn;
+}
+
+void SensorlessObserver::reset() {
+  lamA_ = 0.0;
+  lamB_ = 0.0;
+  thHat_ = 0.0;
+  omHat_ = 0.0;
+  xi_ = 0.0;
+  fluxMag_ = 0.0;
+}
+
+void SensorlessObserver::update(double vAlpha, double vBeta, double iAlpha, double iBeta,
+                                double dt) {
+  if (!std::isfinite(vAlpha) || !std::isfinite(vBeta) || !std::isfinite(iAlpha) ||
+      !std::isfinite(iBeta) || !std::isfinite(dt))
+    throw std::runtime_error("sensorless observer inputs must be finite");
+  if (!(dt > 0.0)) throw std::runtime_error("sensorless observer needs dt > 0");
+  // Voltage-model flux integration with magnitude feedback toward λm.
+  double lrA = lamA_ - l_ * iAlpha;
+  double lrB = lamB_ - l_ * iBeta;
+  const double corr = gamma_ * (lam_ * lam_ - (lrA * lrA + lrB * lrB));
+  lamA_ += (vAlpha - rs_ * iAlpha + corr * lrA) * dt;
+  lamB_ += (vBeta - rs_ * iBeta + corr * lrB) * dt;
+  // Rotor-flux angle (+π fold: EMF sine convention puts integrated flux
+  // opposite the park reference) drives a 2nd-order PLL. At standstill
+  // lr ~ 0 and atan2 is arbitrary — caller must start open-loop (I-f).
+  lrA = lamA_ - l_ * iAlpha;
+  lrB = lamB_ - l_ * iBeta;
+  fluxMag_ = std::hypot(lrA, lrB);
+  const double err = wrapPi(std::atan2(lrB, lrA) + std::numbers::pi - thHat_);
+  xi_ += pllKi_ * err * dt;
+  omHat_ = pllKp_ * err + xi_;
+  thHat_ += omHat_ * dt;
+}
+
 }  // namespace sensing
 }  // namespace power_engine
