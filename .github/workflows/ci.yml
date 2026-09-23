@@ -99,6 +99,8 @@ jobs:
           cmake --build build -j4 --target netlist_buck_demo vienna_demo
       - name: xval self-check (CSV contract, no ngspice needed)
         run: python3 power_engine/xval/xval.py --self-check
+      - name: preflight self-test (missing-tool UX, no tools needed)
+        run: python3 power_engine/scripts/preflight.py --self-test
       - name: Run xval (fails on bound violation)
         run: python3 power_engine/xval/xval.py --build-dir build
 
@@ -133,6 +135,8 @@ jobs:
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release &&
           cmake --build build -j4 --target power_engine
+      - name: Tool preflight gate (zip/unzip/xmllint/c++)
+        run: python3 power_engine/scripts/preflight.py zip unzip xmllint c++
       - name: Pack + ctypes functional check
         run: >
           python3 power_engine/fmi/ctypes_check.py --pack power_engine/fmi/fmi_pack.py

@@ -162,9 +162,16 @@ Gaps found (the refinement backlog §C):
   silently clamp physics, never slow the hot loop for checking). Docs-only;
   every claim cross-checked against the shipped R1–R7 behavior. No test or
   CI job parses ARCHITECTURE (verified by grep).
-- [ ] **R9. Missing-tool UX**: single `tools.py`/shell preflight used by
-  xval + FMI scripts (`ngspice/zip/xmllint/eigen/clang` → one clear error
-  naming the install, same exit code everywhere).
+- [x] **R9. Missing-tool UX** (DONE 2026-09-23): shared
+  `power_engine/scripts/preflight.py` (`require`/`require_path`,
+  `MissingToolError`, uniform exit 2, per-tool `apt install` hints, CLI
+  gate + `--self-test` 7/7). Wired into `xval.py` (ngspice, keeps
+  `--allow-missing` skip), `fmi_pack.py` (c++/zip/netlist/lib/includes —
+  was FileNotFoundError tracebacks), `ctypes_check.py` (unzip, exit 2).
+  CI: preflight gate step in `fmi-smoke` (zip/unzip/xmllint/c++),
+  `--self-test` step in `cross-validate`. Verified: all missing paths
+  exit 2 with named hints, full FMI ctypes check green, xval self-check
+  green, 24/24.
 
 ## D. Critical flows to protect (regression anchors for both tracks)
 

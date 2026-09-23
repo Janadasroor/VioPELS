@@ -20,6 +20,10 @@ import tempfile
 import uuid
 import xml.etree.ElementTree as ET
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "scripts"))
+import preflight
+
 WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fmi_wrapper.cpp")
 
 
@@ -46,6 +50,17 @@ def main():
 
     if not args.name.replace("_", "").isalnum() or args.name[0].isdigit():
         sys.exit("model name must be C-identifier-like")
+    # R9: one clear missing-tool error (exit 2) instead of tracebacks.
+    try:
+        preflight.require(args.cxx)
+        preflight.require("zip")
+        preflight.require_path(args.netlist, "netlist")
+        preflight.require_path(args.lib, "static lib")
+        for d in (args.pe_include, args.fmi_include, args.eigen_include):
+            preflight.require_path(d, "include dir")
+    except preflight.MissingToolError as e:
+        print(f"fmi_pack: {e}", file=sys.stderr)
+        sys.exit(preflight.EXIT_MISSING)
     inputs = [s for s in args.inputs.split(",") if s]
     outputs = [s for s in args.outputs.split(",") if s]
     with open(args.netlist) as f:

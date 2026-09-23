@@ -22,6 +22,10 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "scripts"))
+import preflight
+
 NG_BUCK = """* buck open loop 12V 20kHz D=0.5 (mirrors netlist_buck_demo)
 V1 1 0 DC 12
 Vg 10 0 PULSE(0 1 0 1n 1n 25u 50u)
@@ -270,9 +274,9 @@ def main():
     build_dir = os.path.abspath(args.build_dir)
     ng = args.ngspice
     try:
-        subprocess.run([ng, "--version"], capture_output=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
-        msg = "ngspice not found; install it (apt install ngspice) or pass --ngspice"
+        preflight.require(ng)
+    except preflight.MissingToolError as e:
+        msg = f"{e} (or pass --ngspice to point at one)"
         if args.allow_missing:
             print(msg + " (skipped)")
             return 0

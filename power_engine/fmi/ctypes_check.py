@@ -14,6 +14,10 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "scripts"))
+import preflight
+
 BUCK_NETLIST = """
 .model SW mosfet_ideal RON=5m ROFF=1Meg EON=10u EOFF=15u
 .model DD diode_ideal VF=0.0 RON=10m
@@ -45,6 +49,13 @@ def main():
     ap.add_argument("--eigen-include", required=True)
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
+
+    # R9: missing unzip used to die as a CalledProcessError traceback.
+    try:
+        preflight.require("unzip")
+    except preflight.MissingToolError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        return 2
 
     work = args.workdir or tempfile.mkdtemp(prefix="fmict-")
     os.makedirs(work, exist_ok=True)
