@@ -153,7 +153,16 @@ class TransientSolver {
   SolverState saveState() const;
   void restoreState(const SolverState& s);
   /// Re-stamp the simulation clock (advanced use: repositioning periodic
-  /// orbits; histories and events are NOT touched — caller must align them).
+  /// orbits). Raw primitive: histories (device v_prev/i_prev/flux/timers),
+  /// the solution vector, scheduled Engine events, and loss accumulators
+  /// are NOT touched, so a lone setTime() silently corrupts the trajectory.
+  /// Realignment contract (all four, in order): restoreState() the device
+  /// histories, setTime() the clock, re-arm + re-apply due Engine events,
+  /// refresh accumulators/probes. Sole in-tree caller: Engine::rewindTo(),
+  /// which performs the full sequence (proven bitwise-equivalent by
+  /// RewindToReproducesUninterruptedRun). No debug assert is possible here:
+  /// histories carry no timestamps, and stamping one would cost per-step
+  /// writes in the hot loop (see item 14 de-churn).
   void setTime(double t);
 
   double nodeVoltage(int node) const;

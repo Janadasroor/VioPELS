@@ -142,8 +142,19 @@ Gaps found (the refinement backlog §C):
   power (a rename moves identically); the check lives in the reader +
   self-check. Verified: self-check 6/6, full xval E2E green (buck 5e-4,
   Vienna 1.5e-3), real-file drift rename caught with side named, 24/24.
-- [ ] **R7. `setTime` guardrails**: document-or-enforce history/event
-  realignment (at minimum: debug-mode assert that histories match `t`).
+- [x] **R7. `setTime` guardrails** (DONE 2026-09-23): audit first —
+  `TransientSolver::setTime` is unreachable via `Engine` (solver member
+  private, no mutable accessor) and unused directly anywhere in-tree; sole
+  caller is `Engine::rewindTo` (shooting). Guardrail delivered as: (1) the
+  header contract now lists the four realignment duties in order
+  (restoreState → setTime → event re-arm → accumulators/probes) with
+  `rewindTo` named as the blessed path; (2) new
+  `SteadyState.RewindToReproducesUninterruptedRun` proves rewind+replay
+  bitwise-identical across scheduled gate edges; (3) real bug found by that
+  test and fixed: `rewindTo` from a `Finished` run left the engine
+  un-steppable — it now restores `Running` (no-op on the shooting path,
+  which never sets `tStop`). No debug assert: histories carry no
+  timestamps, and stamping one would cost per-step hot-loop writes. 24/24.
 - [ ] **R8. Trust-boundary doc**: one `ARCHITECTURE.md` section pointing at
   §A (what is validated vs assumed at each boundary) so future modules
   inherit the discipline.

@@ -123,3 +123,57 @@ TEST(SteadyState, BadConfigThrows) {
   res.start();
   EXPECT_THROW(solvePeriodicSteadyState(res, 0.0, cfg), std::runtime_error);  // no L/C
 }
+
+// Refine-roadmap R7: rewindTo() is the sole legitimate setTime() path
+// (histories + clock + events + accumulators realigned together). Rewinding
+// mid-run and re-stepping must reproduce the uninterrupted trajectory
+// bitwise — including across scheduled gate edges (event re-arm path).
+TEST(SteadyState, RewindToReproducesUninterruptedRun) {
+  constexpr double kT = 50e-6, kDt = 1e-6;
+  auto build = [](Engine& eng) {
+    buildCcmBuck(eng, kDt);
+    for (double t = 0.0; t < 100e-6; t += kT) {
+      eng.scheduleSwitch("S1", true, t);
+      eng.scheduleSwitch("S1", false, t + 0.5 * kT);
+    }
+    eng.setStopTime(100e-6);
+    eng.start();
+  };
+  auto traceTo = [](Engine& eng, double tEnd) {
+    std::vector<double> v, il;
+    while (eng.time() < tEnd - 1e-12) {
+      eng.step();
+      v.push_back(eng.currentSolution().probes.at("v:3"));
+      il.push_back(eng.deviceCurrent("L1"));
+    }
+    return std::make_pair(v, il);
+  };
+  Engine ref;
+  build(ref);
+  const auto refTail = traceTo(ref, 100e-6);
+
+  Engine rw;
+  build(rw);
+  (void)traceTo(rw, 60e-6);
+  const auto s60 = rw.saveSolverState();
+  const auto firstTail = traceTo(rw, 100e-6);
+  // Sanity: both runs agreed before any rewind (tails cover steps 60..100).
+  ASSERT_EQ(firstTail.first.size(), 40u);
+  ASSERT_EQ(refTail.first.size(), 100u);
+  for (std::size_t i = 0; i < firstTail.first.size(); ++i) {
+    const std::size_t j = i + 60;
+    EXPECT_EQ(firstTail.first[i], refTail.first[j]);
+    EXPECT_EQ(firstTail.second[i], refTail.second[j]);
+  }
+  // Rewind to 60us (across the 50us/75us edges) and replay: bitwise match.
+  rw.rewindTo(s60, 60e-6);
+  EXPECT_EQ(rw.time(), 60e-6);
+  const auto replayTail = traceTo(rw, 100e-6);
+  ASSERT_EQ(replayTail.first.size(), 40u);  // 40 steps re-stepped
+  for (std::size_t i = 0; i < replayTail.first.size(); ++i) {
+    const std::size_t j = i + 60;  // replay covers reference steps 60..100
+    EXPECT_EQ(replayTail.first[i], refTail.first[j]) << "v step " << i;
+    EXPECT_EQ(replayTail.second[i], refTail.second[j]) << "il step " << i;
+  }
+  EXPECT_NEAR(rw.time(), 100e-6, 1e-12);  // 1ulp summation order, not drift
+}

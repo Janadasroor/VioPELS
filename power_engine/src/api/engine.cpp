@@ -190,6 +190,10 @@ void Engine::rewindTo(const SolverState& state, double t0) {
   applyDueEvents(t0);
   resetAccumulators();
   refreshSolution();
+  // R7: repositioning is for continued simulation — a rewind from a
+  // Finished run must be steppable again (shooting never sets tStop, so
+  // this is a no-op on its path).
+  if (status_ == SimulationStatus::Finished) status_ = SimulationStatus::Running;
 }
 
 void Engine::resetAccumulators() {
