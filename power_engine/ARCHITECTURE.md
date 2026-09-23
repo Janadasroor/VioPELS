@@ -166,6 +166,15 @@
   inductance, so reluctance torque is untestable in-sim (measured slope
   ~1e-4 vs +-6e-3 predicted either way) — MTPA/IPM direction follows the
   code's torque form + industry standard and is pinned open-loop only.
+- Sensing (`sensing.h`, `src/sensing/`): incremental Encoder (ppr
+  counts/rev, floor quantization with wrap/negative handling; assumes a
+  homed drive) + SpeedEstimator (unwrapped difference + exact-dt
+  single-pole LPF; survives wraps/reversals, standstill reads 0, throws
+  on non-increasing t). Sensed FOC runs the Item-19 profile on estimated
+  state with carrier-midpoint-sampled currents (held between ticks):
+  track +-5% (measured +2% integrator-drain lag, not estimator bias —
+  the estimator itself is unbiased to 0.01 rad/s), dip + recover, id ~ 0,
+  iq tracks. Sensorless (EMF observer, no encoder) deferred.
   Hysteretic id=0 drive (self-commutated by construction) with speed PI +
   velocity feedforward + setpoint ramp (no windup). Lessons: PI gains must
   be designed against the real loop (sluggish ki fails load recovery,

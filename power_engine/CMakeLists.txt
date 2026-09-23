@@ -73,6 +73,7 @@ set(POWER_ENGINE_SOURCES
   src/machine/machine.cpp
   src/sweep/sweep.cpp
   src/magnetics/magnetics.cpp
+  src/sensing/sensing.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})
