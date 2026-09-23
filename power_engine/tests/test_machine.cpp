@@ -828,3 +828,23 @@ TEST(PmsmFocSensed, SpeedRampLoadStepAndOrientation) {
   EXPECT_NEAR(iqRefMean / nMean, (kB * kWref + kTload) / kTq,
               0.15 * (kB * kWref + kTload) / kTq);
 }
+
+// MTPV-lite, pinned open-loop: at extreme overspeed (w = 800, we = 1600)
+// no id fits the ellipse at full torque current, so iqRef_ is crushed
+// geometrically while id demand stays yoke-pinned. Deterministic: the
+// MTPV loop completes inside every single update() call.
+TEST(PmsmFocFw, MtpvDeratesTorqueDeterministically) {
+  const ThreePhase zero{0.0, 0.0, 0.0};
+  FocParams fp;
+  fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+  fp.vdc = 24.0;
+  fp.fieldWeakening = true;
+  fp.maxCurrent = 30.0;
+  FocController foc(fp);
+  for (int k = 0; k < 20000; ++k)
+    foc.update(k * 1e-6, 900.0, 0.0, 800.0, zero, 0.0, 1e-6);
+  // Relief crushed the torque demand far below the 2A speed cap...
+  EXPECT_LT(foc.iqRef(), 0.01);
+  // ...while id demand sits at the yoke pin (no bricking, no windup).
+  EXPECT_DOUBLE_EQ(foc.idRef(), 2.0);
+}

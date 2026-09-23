@@ -151,7 +151,8 @@
   feedforward (static Rs-inclusive ellipse root, instant bounded bulk)
   + feedback trim (integrator on |v_cmd|-0.97*vmax, +-5A authority),
   current-circle clamp, cascade demand yoke (demand never leads delivery
-  by more than 2A). Validated: 48V-bus drive holds 260 rad/s (base ~228)
+  by more than 2A), MTPV-lite (geometric iqRef_ backoff until a reachable
+  id fits; algebraic, no lockup path). Validated: 48V-bus drive holds 260
   with id ~ +4.3 tracking, while the no-FW contrast stalls at the ceiling.
   CONVENTION LESSON (measured the hard way, do not "fix" to textbooks):
   for this codebase's park (q from the +sine row), the plant is vd =

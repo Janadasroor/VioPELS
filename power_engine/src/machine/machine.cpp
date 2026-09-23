@@ -256,15 +256,39 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
   if (p_.fieldWeakening) {
     const double lam = p_.motor.lambdaPm;
     const double ld = p_.motor.ld, lq = p_.motor.lq, rs = p_.motor.rs;
+    const double awe = std::abs(we);
+    const double lim = p_.maxCurrent > 0.0 ? p_.maxCurrent : p_.speedMaxIq;
     // MTPA (IPM only; Ld == Lq gives exactly 0): id* for torque optimality.
     double idmtpa = 0.0;
     if (lq > ld) {
       idmtpa = (lam - std::sqrt(lam * lam + 8.0 * (lq - ld) * (lq - ld) * iqRef_ * iqRef_)) /
                (4.0 * (lq - ld));  // <= 0
     }
+    // MTPV-lite: if no reachable id fits the ellipse at iqRef_, back iqRef_
+    // off geometrically until one does (torque derates in deep FW —
+    // standard MTPV behavior). Algebraic + bounded (<=10 halvings): no
+    // integrator state, so no lockup path (an earlier iq-relief-on-floor
+    // design starved torque while the d-PI stayed railed and bricked).
+    // Reachable = fits at id = 0, or a root within the current circle.
+    const double aa = rs * rs + awe * awe * ld * ld;
+    for (int k = 0; k < 10; ++k) {
+      const double cc =
+          awe * awe * lq * lq * iqRef_ * iqRef_ +
+          (rs * iqRef_ + awe * lam) * (rs * iqRef_ + awe * lam) - vmax * vmax;
+      if (cc <= 0.0) break;
+      const double bb = 2.0 * awe * (rs * lq * iqRef_ - ld * (rs * iqRef_ + awe * lam));
+      const double dd = bb * bb - 4.0 * aa * cc;
+      if (dd < 0.0) {
+        iqRef_ *= 0.5;
+        continue;
+      }
+      const double sq = std::sqrt(dd);
+      const double r1 = (-bb + sq) / (2.0 * aa), r2 = (-bb - sq) / (2.0 * aa);
+      if (std::min(std::abs(r1), std::abs(r2)) <= lim) break;
+      iqRef_ *= 0.5;
+    }
     // Feedforward: min-abs root of A*id^2+B*id+C (0 when id = 0 fits).
-    const double awe = std::abs(we);
-    const double a = rs * rs + awe * awe * ld * ld;
+    const double a = aa;
     const double b = 2.0 * awe * (rs * lq * iqRef_ - ld * (rs * iqRef_ + awe * lam));
     const double c = awe * awe * lq * lq * iqRef_ * iqRef_ +
                      (rs * iqRef_ + awe * lam) * (rs * iqRef_ + awe * lam) - vmax * vmax;
@@ -288,15 +312,11 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
     // FW wins above base (idff/idfb_ nonzero); MTPA applies below base.
     double idFw = idff + idfb_;
     idRef_ = (idff != 0.0 || idfb_ != 0.0) ? idFw : idmtpa;
-    // No MTPV iq management: beyond-capability operation saturates demand
-    // honestly (follow-up). The yoke below bounds the demand step so a
-    // railed d-PI can never pin vmag high forever.
     // Cascade demand yoke: never demand more than kFwLead above what the
     // d-axis actually delivers (keeps vd honest so vmag reflects need).
     constexpr double kFwLead = 2.0;  // [A]
     if (idRef_ > id_ + kFwLead) idRef_ = id_ + kFwLead;
     // Current circle shared by torque + demag (angle-preserving scale).
-    const double lim = p_.maxCurrent > 0.0 ? p_.maxCurrent : p_.speedMaxIq;
     const double im = std::hypot(idRef_, iqRef_);
     if (im > lim && im > 0.0) {
       idRef_ *= lim / im;

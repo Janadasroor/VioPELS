@@ -95,10 +95,11 @@ struct FocParams {
   /// FW drives id* POSITIVE (which lowers terminal voltage here; textbook
   /// demag-id* conventions assume the opposite q-handing and fight this
   /// plant by volts — proven by open-loop plant ID). Above base FW wins
-  /// over MTPA; below base static MTPA (IPM only) applies. Demand never
-  /// leads delivery by more than 2A (cascade yoke). Both refs share the
-  /// current circle (angle-preserving scale). No MTPV iq management
-  /// (follow-up).
+  /// over MTPA; below base static MTPA (IPM only) applies. MTPV-lite backs
+  /// iqRef_ off geometrically until a reachable id fits the ellipse
+  /// (torque derates in deep FW). Demand never leads delivery by more
+  /// than 2A (cascade yoke). Both refs share the current circle
+  /// (angle-preserving scale).
   bool fieldWeakening = false;
   double maxCurrent = 0.0;  ///< circle limit [A], 0 = follow speedMaxIq
   /// FW voltage-loop gain [A/(V*s)]: idfb_ integrates (|v_cmd|-0.97*vmax).
