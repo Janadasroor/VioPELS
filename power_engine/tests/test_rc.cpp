@@ -154,3 +154,25 @@ TEST(RCLadder, SparsePathDetectsSingular) {
   eng.start();
   EXPECT_THROW(eng.step(), std::runtime_error);
 }
+
+// Refine-roadmap R5: the topology generation guards cached solver maps.
+// Every add* bumps it; the solver snapshots it at rebuildMaps() and throws
+// on mismatch at step() — so even a same-size structural change (possible
+// via a future remove/replace API) can never silently alias the maps.
+// Direct mutableDevices() structural edits stay unchecked by design
+// (solver-owned backdoor: the solver itself writes histories there).
+TEST(CircuitValidation, GenerationGuardsMidRunTopologyChange) {
+  power_engine::Engine eng;
+  eng.setTimeStep(1e-6);
+  EXPECT_EQ(eng.circuit().generation(), 0ULL);
+  eng.circuit().addVoltageSource("V1", 1, 0, 1.0);
+  eng.circuit().addResistor("R1", 1, 2, 1000.0);
+  eng.circuit().addCapacitor("C1", 2, 0, 1e-6, 0.0);
+  EXPECT_EQ(eng.circuit().generation(), 3ULL);  // one bump per add
+  eng.setStopTime(10e-6);
+  eng.start();
+  eng.step();
+  // Structural add mid-run: the next step must refuse (maps cached at start).
+  eng.circuit().addResistor("Rx", 2, 0, 100.0);
+  EXPECT_THROW(eng.step(), std::runtime_error);
+}

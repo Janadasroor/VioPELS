@@ -61,6 +61,7 @@ void TransientSolver::setAdaptive(double tol, double dtMin, double dtMax) {
 
 void TransientSolver::rebuildMaps() {
   nodeList_ = circuit_.nodes();
+  topoSeen_ = circuit_.generation();  // R5: sync topology version with maps
   nodeIndex_.clear();
   hasNonlinear_ = false;
   hasDiodes_ = false;
@@ -1057,6 +1058,11 @@ void TransientSolver::step() {
   // advance during iteration), then histories advance once.
   if (rowA_.size() != circuit_.devices().size()) {
     throw std::runtime_error("topology change mid-run: only device values may change");
+  }
+  // R5: same-size structural changes (remove/replace API, now or future)
+  // can never silently alias the cached maps. One integer compare per step.
+  if (circuit_.generation() != topoSeen_) {
+    throw std::runtime_error("topology change mid-run: circuit structure changed");
   }
   if (!adaptive_.enabled) {
     const long long r0 = stats_.resolves, n0 = stats_.newtonIters;

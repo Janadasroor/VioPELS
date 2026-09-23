@@ -248,6 +248,10 @@ class TransientSolver {
   std::vector<int> rowE_;  // extra-var base row per device (-1 if none)
   bool hasNonlinear_ = false;  // any saturable inductor present
   bool hasDiodes_ = false;     // any diode present (scan fast path)
+  // Topology version seen at the last rebuildMaps() (R5). Compared per
+  // step: a mismatch means structural change mid-run, even at equal
+  // device count (which the size check alone would miss).
+  unsigned long long topoSeen_ = 0;
   Eigen::VectorXd x_;                   // last solution
   // Reused across steps: no per-step heap allocation in the hot loop.
   // Factorization objects are per cache slot (one per integrator stage):

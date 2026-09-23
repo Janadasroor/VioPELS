@@ -70,15 +70,24 @@ class Circuit {
   std::size_t numVoltageSources() const;
   /// Total extra MNA unknowns (1 per V-source, 2 per transformer).
   std::size_t numExtraUnknowns() const;
+  /// Topology version: bumped by every add* (refine-roadmap R5). The solver
+  /// snapshots it at rebuildMaps() and throws on mismatch at step(), so a
+  /// same-size structural change can never silently alias cached maps —
+  /// even once a remove/replace API exists. Direct mutableDevices() edits
+  /// do NOT bump it (solver-owned backdoor: the solver itself writes
+  /// histories there every step).
+  unsigned long long generation() const { return generation_; }
 
  private:
   static void checkNodes(int n1, int n2);
   static void checkPositive(double v, const char* what);
   static void checkNameUnique(const std::vector<Device>& devs,
                               const std::string& name);
+  void noteTopologyChange() { ++generation_; }
 
   std::vector<Device> devices_;
   mutable std::map<std::string, std::size_t> index_;  // lazy name -> position
+  unsigned long long generation_ = 0;
 };
 
 }  // namespace power_engine

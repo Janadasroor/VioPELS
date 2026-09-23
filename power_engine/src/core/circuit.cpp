@@ -46,6 +46,7 @@ void Circuit::addResistor(const std::string& name, int n1, int n2, double r) {
   checkNodes(n1, n2);
   checkPositive(r, "R");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   devices_.push_back(makeDevice(DeviceType::Resistor, name, n1, n2, r));
 }
 
@@ -54,6 +55,7 @@ void Circuit::addCapacitor(const std::string& name, int n1, int n2, double c, do
   checkPositive(c, "C");
   if (!std::isfinite(vc0)) throw std::runtime_error("Vc0 must be finite");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   devices_.push_back(makeDevice(DeviceType::Capacitor, name, n1, n2, c, vc0));
 }
 
@@ -62,6 +64,7 @@ void Circuit::addInductor(const std::string& name, int n1, int n2, double l, dou
   checkPositive(l, "L");
   if (!std::isfinite(il0)) throw std::runtime_error("Il0 must be finite");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   devices_.push_back(makeDevice(DeviceType::Inductor, name, n1, n2, l, il0));
 }
 
@@ -69,6 +72,7 @@ void Circuit::addVoltageSource(const std::string& name, int np, int nm, double v
   checkNodes(np, nm);
   if (!std::isfinite(v)) throw std::runtime_error("V must be finite");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   devices_.push_back(makeDevice(DeviceType::VoltageSource, name, np, nm, v));
 }
 
@@ -76,6 +80,7 @@ void Circuit::addCurrentSource(const std::string& name, int np, int nm, double i
   checkNodes(np, nm);
   if (!std::isfinite(i)) throw std::runtime_error("I must be finite");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   devices_.push_back(makeDevice(DeviceType::CurrentSource, name, np, nm, i));
 }
 
@@ -100,6 +105,7 @@ void Circuit::addSwitch(const std::string& name, int n1, int n2, double ron, dou
     throw std::runtime_error("Tsw must be finite >= 0");
   }
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   Device d = makeDevice(DeviceType::Switch, name, n1, n2, 0.0);
   d.ron = ron;
   d.roff = roff;
@@ -124,6 +130,7 @@ void Circuit::addDiode(const std::string& name, int anode, int cathode, double v
   if (!(trr >= 0.0) || !std::isfinite(trr)) throw std::runtime_error("Trr must be finite >= 0");
   if (qrr > 0.0 && !(trr > 0.0)) throw std::runtime_error("Qrr needs Trr > 0");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   Device d = makeDevice(DeviceType::Diode, name, anode, cathode, 0.0);
   d.vf = vf;
   d.ron = ron;
@@ -142,6 +149,7 @@ void Circuit::addTransformer(const std::string& name, int np1, int nm1, int np2,
     throw std::runtime_error("transformer ratio must be positive finite");
   }
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   Device d = makeDevice(DeviceType::Transformer, name, np1, nm1, 0.0);
   d.n3 = np2;
   d.n4 = nm2;
@@ -162,6 +170,7 @@ void Circuit::addCoupledInductors(const std::string& name, int n1a, int n1b, int
     throw std::runtime_error("coupled initial currents must be finite");
   }
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   Device d = makeDevice(DeviceType::CoupledInductor, name, n1a, n1b, 0.0, il10);
   d.n3 = n2a;
   d.n4 = n2b;
@@ -182,6 +191,7 @@ void Circuit::addSaturableInductor(const std::string& name, int n1, int n2, doub
   if (!(lsat <= lunsat)) throw std::runtime_error("Lsat must not exceed Lunsat");
   if (!std::isfinite(il0)) throw std::runtime_error("Il0 must be finite");
   checkNameUnique(devices_, name);
+  noteTopologyChange();
   Device d = makeDevice(DeviceType::SatInductor, name, n1, n2, lunsat, il0);
   d.lsat = lsat;
   d.isat = isat;

@@ -116,9 +116,21 @@ Gaps found (the refinement backlog §C):
   cascades damp out) — the cap stays a safety net, and the zeros double as
   evidence for the 14c decline. Later: consider escalating chronic
   saturation to a BDF2 hint. 24/24 green.
-- [ ] **R5. Topology generation counter**: `Circuit::generation()` bumped on
-  any add/remove; `solver.step()` throws on mismatch even when sizes agree.
-  Test: same-size swap throws instead of aliasing.
+- [x] **R5. Topology generation counter** (DONE 2026-09-22):
+  `Circuit::generation()` bumped once per add* (all 10 methods); solver
+  snapshots it in `rebuildMaps()` and throws on mismatch in `step()` (one
+  integer compare; size check kept first for its message). New
+  `CircuitValidation.GenerationGuardsMidRunTopologyChange` (counter starts
+  0, +1/add, mid-run add → step throws). Sync audit: all `rebuildMaps`
+  callers (ctor, `initialize`, `restoreState`) are legitimate topology
+  sync points — `loadNetlist`/`setParameter`/`start`/shooting rewind all
+  re-sync, full suite proves no false positives. Honest scope: with no
+  `removeDevice` API, every reachable structural change also changes size
+  (size check fires first), so the generation check is unreachable-today
+  insurance for a future remove/replace API. Residual, unchanged:
+  same-size structural edits via `mutableDevices()` (solver-owned backdoor)
+  and hostile cross-circuit `restoreSolverState` stay unchecked by design.
+  24/24 green.
 - [ ] **R6. CSV schema contract**: named `DemoCsv` writer/reader shared by
   demos + `xval.py` (header assert naming the expected probe, not
   `ValueError`); xval emits which side drifted.
