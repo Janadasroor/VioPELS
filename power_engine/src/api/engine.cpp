@@ -508,4 +508,12 @@ thermal::DeviceLoss Engine::deviceLoss(const std::string& device) const {
   return it->second;
 }
 
+double Engine::hysteresisLoss(const std::string& device) const {
+  const Device& d = circuit_.findDevice(device);
+  if (d.type != DeviceType::HystereticInductor) {
+    throw std::runtime_error("hysteresisLoss needs a hysteretic inductor: " + device);
+  }
+  return d.hLoss * d.hVe;
+}
+
 }  // namespace power_engine

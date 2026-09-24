@@ -160,6 +160,14 @@ void TransientSolver::initialize() {
       d.i_prev = d.ic;
       d.flux = satFlux(d.ic, d.value, d.lsat, d.isat);
       d.newton_ik = d.ic;
+    } else if (d.type == DeviceType::HystereticInductor) {
+      d.v_prev = 0.0;
+      d.i_prev = d.ic;
+      d.hH = d.hTurns * d.ic / d.hLe;
+      d.hS = 0.0;
+      d.hB = d.hBs * std::tanh(d.hH / d.hA);
+      d.hLoss = 0.0;
+      d.flux = d.hTurns * d.hAe * d.hB;
     } else {
       d.v_prev = 0.0;
       d.i_prev = 0.0;
@@ -402,6 +410,27 @@ void TransientSolver::assemble(bool withMatrix) const {
         stampI(z, r1, r2, ieq);
         break;
       }
+      case DeviceType::HystereticInductor: {
+        // Explicit companion (no Newton): tangent Lt at the stage-start
+        // state, history from committed (i_prev, v_prev). Stage-2 BDF2
+        // references the committed midpoint (i_mid, fluxMid) exactly like
+        // the linear form: ieq = iMid + (lamMid-flux)/(3*Lt) reproduces
+        // (4/3)*iMid - (1/3)*iPrev for constant Lt. hystLt carries the
+        // air-core floor (saturated tanh slope -> 0 would singularize MNA).
+        double lt, ieq, g;
+        if (bdf2Stage_) {
+          lt = hystLt(d.i_mid, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+          g = dt_ / (3.0 * lt);
+          ieq = d.i_mid + (d.fluxMid - d.flux) / (3.0 * lt);
+        } else {
+          lt = hystLt(d.i_prev, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+          g = dt_ / (2.0 * lt);
+          ieq = d.i_prev + g * d.v_prev;
+        }
+        if (withMatrix) stampG(A, r1, r2, g);
+        stampI(z, r1, r2, ieq);
+        break;
+      }
     }
   }
 }
@@ -512,6 +541,14 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
         // changing operating point must never alias a cached signature.
         hashWord(h, dblBits(d.value));
         hashWord(h, dblBits(d.newton_ik));
+        break;
+      case DeviceType::HystereticInductor:
+        // Explicit companion, no Newton — but the tangent moves every
+        // step, so salt both operating points (prev for trap/stage-1,
+        // mid for BDF2 stage-2; stage bit salts separately) and
+        // refactorize instead of reusing stale factors.
+        hashWord(h, dblBits(hystLt(d.i_prev, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA)));
+        hashWord(h, dblBits(hystLt(d.i_mid, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA)));
         break;
       case DeviceType::VoltageSource:
       case DeviceType::CurrentSource:
@@ -738,6 +775,35 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
         }
         break;
       }
+      case DeviceType::HystereticInductor: {
+        // Explicit companion commit: same G/ieq as the stamp, then advance
+        // the (H, s, B, loss) state exactly once per committed segment.
+        // Mid commits advance to mid (stage scratch, reverted with the
+        // rest of the state on adaptive reject); end commits refresh flux.
+        double iNew;
+        if (bdf2) {
+          const double lt = hystLt(d.i_mid, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+          const double g = dt_ / (3.0 * lt);
+          iNew = g * vNew + d.i_mid + (d.fluxMid - d.flux) / (3.0 * lt);
+        } else {
+          const double lt = hystLt(d.i_prev, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+          const double g = dt_ / (2.0 * lt);
+          iNew = d.i_prev + g * vNew + g * d.v_prev;
+        }
+        vT = vNew;
+        iT = iNew;
+        const double hNew = d.hTurns * iNew / d.hLe;
+        hystAdvance(hNew, d.hH, d.hS, d.hB, d.hLoss, d.hHc, d.hBs, d.hA);
+        // Mid commits must not clobber the step-start flux (stage-2 BDF2
+        // references both); end commits refresh it. Same split as the
+        // saturable branch (ik_mid vs flux) above.
+        if (mid) {
+          d.fluxMid = hystFlux(iNew, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+        } else {
+          d.flux = hystFlux(iNew, d.hS, d.hTurns, d.hAe, d.hLe, d.hBs, d.hA);
+        }
+        break;
+      }
     }
   }
   if (mid) return;  // branch-current unknowns have no midpoint state
@@ -767,6 +833,7 @@ struct TransientSolver::Snapshot {
     double recT = 0.0, recI = 0.0, recE = 0.0;
     bool closedPrev = false;
     double transT = 0.0, transFrom = 0.0, transTo = 0.0;
+    double hH = 0.0, hS = 0.0, hB = 0.0, hLoss = 0.0;  // hysteretic state
   };
   std::vector<Dev> devs;
 };
@@ -781,7 +848,7 @@ TransientSolver::Snapshot TransientSolver::snapshot() const {
   for (const auto& d : devs) {
     s.devs.push_back({d.v_prev, d.i_prev, d.v2_prev, d.i2_prev, d.conducting, d.flux,
                       d.newton_ik, d.recT, d.recI, d.recE, d.closedPrev, d.transT,
-                      d.transFrom, d.transTo});
+                      d.transFrom, d.transTo, d.hH, d.hS, d.hB, d.hLoss});
   }
   return s;
 }
@@ -806,6 +873,10 @@ void TransientSolver::restore(const Snapshot& s) {
     devs[i].transT = s.devs[i].transT;
     devs[i].transFrom = s.devs[i].transFrom;
     devs[i].transTo = s.devs[i].transTo;
+    devs[i].hH = s.devs[i].hH;
+    devs[i].hS = s.devs[i].hS;
+    devs[i].hB = s.devs[i].hB;
+    devs[i].hLoss = s.devs[i].hLoss;
   }
 }
 

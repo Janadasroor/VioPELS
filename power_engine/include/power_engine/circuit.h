@@ -48,6 +48,13 @@ class Circuit {
   /// Requires 0 < Lsat <= Lunsat and Isat > 0.
   void addSaturableInductor(const std::string& name, int n1, int n2, double lunsat,
                             double lsat, double isat, double il0 = 0.0);
+  /// Hysteretic inductor: N-turn winding on a tanh B-H core (Ae/le/Ve,
+  /// Bs/a/Hc with Hc = 0 anhysteretic). Explicit companion, no Newton;
+  /// loss accumulates the H-B loop area. Requires N/Ae/le/Ve/Bs/a > 0,
+  /// Hc >= 0, finite Il0.
+  void addHystereticInductor(const std::string& name, int n1, int n2, double turns,
+                             double ae, double le, double ve, double bs, double a,
+                             double hc = 0.0, double il0 = 0.0);
 
   /// Gate control for switches. Throws if name is not a Switch.
   void setSwitch(const std::string& name, bool closed);

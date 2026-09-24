@@ -591,6 +591,18 @@ struct Elaborator {
                                is, ic);
         break;
       }
+      case 'H': {
+        // Hysteretic inductor: Hname n1 n2 N=.. AE=.. LE=.. VE=.. BS=.. A=..
+        // [HC=..] [IC=..].
+        if (pos.size() != 2) fail(line, "hysteretic inductor needs: Hname n1 n2 N=.. AE=.. LE=.. VE=.. BS=.. A=..");
+        c.addHystereticInductor(
+            name, nodeId(pos[0], line), nodeId(pos[1], line), kvNum(kv, "N", 0.0, line),
+            kvNum(kv, "AE", 0.0, line), kvNum(kv, "LE", 0.0, line),
+            kvNum(kv, "VE", 0.0, line), kvNum(kv, "BS", 0.0, line),
+            kvNum(kv, "A", 0.0, line), kvNum(kv, "HC", 0.0, line),
+            kvNum(kv, "IC", 0.0, line));
+        break;
+      }
       case 'X': {
         if (depth >= 16) fail(line, "subcircuit nesting too deep");
         if (pos.empty()) fail(line, "X needs: Xname nodes... subckt");
@@ -1066,6 +1078,11 @@ std::string NetlistResult::serialize() const {
       case DeviceType::SatInductor:
         os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " LUNSAT=" << d.value
            << " LSAT=" << d.lsat << " ISAT=" << d.isat << " IC=" << d.ic << "\n";
+        break;
+      case DeviceType::HystereticInductor:
+        os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " N=" << d.hTurns
+           << " AE=" << d.hAe << " LE=" << d.hLe << " VE=" << d.hVe << " BS=" << d.hBs
+           << " A=" << d.hA << " HC=" << d.hHc << " IC=" << d.ic << "\n";
         break;
     }
   }

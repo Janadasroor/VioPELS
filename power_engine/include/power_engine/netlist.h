@@ -86,6 +86,8 @@ struct NetlistResult {
 /// Tname n1 n2 n3 n4 [RATIO=n]   (ideal transformer, n:1)
 /// Wname n1 n2 n3 n4 L1=.. L2=.. (K=..|M=..) [IC1=..] [IC2=..]
 /// Yname n1 n2 LUNSAT=.. LSAT=.. ISAT=.. [IC=..]  (saturable inductor)
+/// Hname n1 n2 N=.. AE=.. LE=.. VE=.. BS=.. A=.. [HC=..] [IC=..]
+///   (hysteretic inductor)
 /// Xname nodes... subcktName      (subcircuit instance)
 /// .subckt NAME ports... / .ends
 /// .tran dt tstop

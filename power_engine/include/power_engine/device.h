@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -16,6 +17,10 @@ enum class DeviceType {
   Transformer,  ///< Ideal transformer, algebraic: Vp = ratio*Vs, ratio*Ip + Is = 0.
   CoupledInductor,  ///< Two windings with mutual M (trapezoidal 2-port Norton).
   SatInductor,  ///< Saturable inductor: lambda(i) = Lsat*i + (Lunsat-Lsat)*Isat*tanh(i/Isat).
+  HystereticInductor,  ///< Hysteretic inductor: N-turn winding on a tanh
+  ///< B-H core (Preisach-style memory offset), explicit companion, no
+  ///< Newton. State advances only on committed steps (no iteration
+  ///< pollution); loss accumulates the H-B loop area like HysteresisCore.
 };
 
 /// Single two-terminal device (four-terminal for Transformer/CoupledInductor).
@@ -26,6 +31,8 @@ enum class DeviceType {
 /// no magnetizing inductance or saturation). CoupledInductor uses l1/l2/m
 /// with dots at n1 and n3: v1 = L1 di1/dt + M di2/dt (0 < k < 1 required).
 /// SatInductor uses value=Lunsat plus lsat/isat; flux holds λ(i_n).
+/// HystereticInductor uses hTurns/hAe/hLe/hVe/hBs/hA/hHc; hH/hS/hB hold
+/// the (H, memory, B) state, hLoss the accumulated J/m^3 loop area.
 struct Device {
   DeviceType type = DeviceType::Resistor;
   std::string name;
@@ -44,6 +51,20 @@ struct Device {
   double isat = 0.0;   // saturable knee current [A]
   double flux = 0.0;   // flux linkage λ(i) at previous step [Wb]
   double newton_ik = 0.0;  // Newton operating-point current (solver-managed)
+  // Hysteretic-inductor core (unused by other types; solver-managed
+  // state hH/hS/hB/hLoss advances only on committed steps).
+  double hTurns = 0.0;  // winding turns N
+  double hAe = 0.0;     // core cross-section [m^2]
+  double hLe = 0.0;     // core path length [m]
+  double hVe = 0.0;     // core volume [m^3] (loss reporting)
+  double hBs = 0.0;     // saturation flux density [T]
+  double hA = 0.0;      // tanh shape field [A/m]
+  double hHc = 0.0;     // coercivity [A/m] (0 = anhysteretic)
+  double hH = 0.0;      // field H = N*i/le at previous commit [A/m]
+  double hS = 0.0;      // memory offset in [-Hc, +Hc]
+  double hB = 0.0;      // flux density at previous commit [T]
+  double hLoss = 0.0;   // accumulated loop-area density [J/m^3]
+  double fluxMid = 0.0;  // TR-BDF2 midpoint flux linkage [Wb] (stage scratch)
 
   // Per-step history for trapezoidal companion models (solver-managed).
   double v_prev = 0.0;   // V(n1)-V(n2) at previous step
@@ -112,6 +133,45 @@ inline double satFlux(double i, double lunsat, double lsat, double isat) {
 inline double satSlope(double i, double lunsat, double lsat, double isat) {
   const double s = 1.0 / std::cosh(i / isat);
   return lsat + (lunsat - lsat) * s * s;
+}
+
+/// Hysteretic-inductor linkage shared by Circuit (init) and the solver's
+/// explicit companion — single definition on purpose.
+/// B(H) = Bs*tanh((H-s)/a) on memory offset s; λ = N*Ae*B, H = N*i/le.
+inline double hystFlux(double i, double s, double turns, double ae, double le, double bs,
+                       double a) {
+  const double h = turns * i / le;
+  return turns * ae * bs * std::tanh((h - s) / a);
+}
+
+/// Tangent dλ/di at (i, s): N^2*Ae*Bs/(a*le)*sech^2((H-s)/a) (always > 0).
+inline double hystTangent(double i, double s, double turns, double ae, double le, double bs,
+                          double a) {
+  const double t = std::tanh((turns * i / le - s) / a);
+  return turns * turns * ae * bs / (a * le) * (1.0 - t * t);
+}
+
+/// Companion tangent with air-core floor: the tanh slope -> 0 in deep
+/// saturation would singularize MNA (G = dt/(2Lt) explodes); a saturated
+/// core is still mu0. Single definition for stamp, signature salt, and
+/// histories — all three must agree bit-for-bit.
+inline double hystLt(double i, double s, double turns, double ae, double le, double bs,
+                     double a) {
+  constexpr double kMu0 = 4.0 * 3.141592653589793e-7;
+  const double lt = hystTangent(i, s, turns, ae, le, bs, a);
+  const double air = turns * turns * ae * kMu0 / le;
+  return lt > air ? lt : air;
+}
+
+/// Advance (H, s, B, loss) one committed segment (mirrors HysteresisCore:
+/// saturating offset memory + trapezoid H-B area; idempotent in H).
+inline void hystAdvance(double hNew, double& hH, double& hS, double& hB, double& hLoss,
+                        double hc, double bs, double a) {
+  hS = std::clamp(hS + (hNew - hH), -hc, hc);
+  const double b = bs * std::tanh((hNew - hS) / a);
+  hLoss += 0.5 * (hNew + hH) * (b - hB);
+  hH = hNew;
+  hB = b;
 }
 
 }  // namespace power_engine

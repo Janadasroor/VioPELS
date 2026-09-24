@@ -517,3 +517,219 @@ TEST(InductorDesign, SteelCoreLossPaths) {
   EXPECT_NEAR(d.lAtZero, 200e-6, 0.01 * 200e-6);
   EXPECT_LT(d.rolloff, 0.1);
 }
+
+// --- Hysteretic inductor device (explicit companion, no Newton) ---
+
+// Small-signal (Hc = 0 anhysteretic): voltage step, di/dt gives L0 exactly.
+// NOTE: Hc > 0 reads ~0 small-signal L by model construction (s tracks H
+// 1:1 below the clamps — documented limitation), so linear-regime tests
+// use Hc = 0 where the virgin slope Bs/a is exact.
+TEST(HystereticDevice, SmallSignalMatchesTangent) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  // N=10, Ae=1e-4, le=0.1, Bs=1.5, a=100: L0 = 100*1e-4*0.015/0.1 = 1.5mH.
+  eng.circuit().addVoltageSource("V1", 1, 0, 1.0);
+  eng.circuit().addHystereticInductor("H1", 1, 0, 10.0, 1e-4, 0.1, 1e-5, 1.5, 100.0,
+                                      0.0, 0.0);
+  eng.setStopTime(200e-6);
+  eng.start();
+  double i0 = 0.0, i1 = 0.0;
+  bool got0 = false, got1 = false;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.step();
+    const double t = eng.currentSolution().t;
+    if (!got0 && t >= 50e-6) {
+      i0 = eng.deviceCurrent("H1");
+      got0 = true;
+    }
+    if (!got1 && t >= 150e-6) {
+      i1 = eng.deviceCurrent("H1");
+      got1 = true;
+    }
+  }
+  const double slope = (i1 - i0) / 100e-6;
+  EXPECT_NEAR(1.0 / slope, 1.5e-3, 0.03 * 1.5e-3);
+}
+
+// Buck through a hysteretic inductor (Hc = 0) matches the plain-L buck:
+// same Norton math, explicit companion is exact for the anhysteretic curve.
+TEST(HystereticDevice, BuckMatchesPlainL) {
+  constexpr double kDt = 0.5e-6, kStop = 6e-3, kT = 50e-6;
+  auto runBuck = [&](bool hysteretic) {
+    Engine eng;
+    eng.setTimeStep(kDt);
+    eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+    eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+    eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+    if (hysteretic) {
+      // N=10, le=0.5, Bs=1.0, a=100 (Hc=0): L0 = 200uH, H(2A) = 40 = 0.4a.
+      eng.circuit().addHystereticInductor("L1", 2, 3, 10.0, 1e-4, 0.5, 5e-6, 1.0,
+                                          100.0, 0.0, 0.0);
+    } else {
+      eng.circuit().addInductor("L1", 2, 3, 200e-6, 0.0);
+    }
+    eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+    eng.circuit().addResistor("Rload", 3, 0, 5.0);
+    eng.setStopTime(kStop);
+    eng.start();
+    double voutSum = 0.0;
+    long long voutCount = 0;
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      const double tNext = eng.currentSolution().t + kDt;
+      eng.setSwitch("S1", std::fmod(tNext, kT) < 0.5 * kT);
+      eng.step();
+      const double t = eng.currentSolution().t;
+      if (t > kStop - kT) {
+        voutSum += eng.currentSolution().probes.at("v:3");
+        ++voutCount;
+      }
+    }
+    return voutSum / static_cast<double>(voutCount);
+  };
+  const double plain = runBuck(false);
+  const double hyst = runBuck(true);
+  EXPECT_NEAR(hyst, plain, 0.02 * plain);
+}
+
+// Major-loop loss (Hc = 50): prescribed triangle current ±2A at 1kHz
+// (H = ±200 A/m, saturates s at ±50) accumulates the H-B loop area
+// in-circuit. Pins device loss against the standalone HysteresisCore on
+// the same H(t) (tight: same path integral) and against the 4*Hc*Bs
+// major-loop analytic (loose: tanh corners).
+TEST(HystereticDevice, SaturationLossMatchesMajorLoop) {
+  constexpr double kDt = 25e-6, kFreq = 1e3, kPeriod = 1.0 / kFreq;
+  constexpr double kTurns = 10.0, kLe = 0.1, kAe = 1e-4, kVe = 1e-5;
+  constexpr double kBs = 1.5, kA = 100.0, kHc = 50.0;
+  auto runDrive = [&](int cycles, double* lossOut) {
+    Engine eng;
+    eng.setTimeStep(kDt);
+    eng.circuit().addCurrentSource("I1", 0, 1, 0.0);
+    eng.circuit().addHystereticInductor("H1", 1, 0, kTurns, kAe, kLe, kVe, kBs, kA,
+                                        kHc, 0.0);
+    eng.setStopTime(cycles * kPeriod);
+    eng.start();
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      const double t = eng.currentSolution().t + kDt;
+      const double ph = std::fmod(t, kPeriod) / kPeriod;
+      const double tri = ph < 0.5 ? -2.0 + 8.0 * ph : 6.0 - 8.0 * ph;  // ±2A triangle
+      eng.circuit().findDevice("I1").value = tri;
+      eng.step();
+    }
+    *lossOut = eng.hysteresisLoss("H1");
+  };
+  double loss1 = 0.0, loss5 = 0.0;
+  runDrive(1, &loss1);
+  runDrive(5, &loss5);
+  const double perCycle = (loss5 - loss1) / 4.0;
+  // Standalone core per-cycle on the identical H(t) path: subdivided
+  // legs (the trapezoid area needs the branch curve resolved; bare
+  // vertices give exactly 0 for symmetric swings since h+hPrev = 0).
+  power_engine::magnetics::HysteresisCore core(
+      power_engine::magnetics::HystereticMaterial{kBs, kA, kHc});
+  core.update(0.0);
+  auto legTo = [&](double hEnd) {
+    const double hStart = core.field();
+    constexpr int kSteps = 40;
+    for (int k = 1; k <= kSteps; ++k)
+      core.update(hStart + (hEnd - hStart) * static_cast<double>(k) / kSteps);
+  };
+  legTo(-200.0);
+  const double l1 = core.loss();
+  for (int c = 0; c < 2; ++c) {
+    legTo(200.0);
+    legTo(-200.0);
+  }
+  const double refPerCycle = (core.loss() - l1) / 2.0 * kVe;
+  EXPECT_NEAR(perCycle, refPerCycle, 0.05 * refPerCycle);
+  // Analytic major-loop area 4*Hc*Bs (tanh corners shave some off).
+  const double analytic = 4.0 * kHc * kBs * kVe;
+  EXPECT_GT(perCycle, 0.5 * analytic);
+  EXPECT_LT(perCycle, analytic);
+}
+
+// Solver-mode consistency on a smooth Thevenin drive (voltage source +
+// series R: determinate voltages, no prescribed kinks — a current source
+// straight across the inductor traps the adaptive error metric on the
+// indeterminate Nyquist-ringing voltage, equally for plain L). Hc = 0
+// anhysteretic: all modes must agree on current (companion exactness) and
+// report zero loss. NOTE (documented numerical behavior, not a bug being
+// papered over): on MAJOR-loop drives (Hc > 0, deep saturation) TR-BDF2
+// can settle into a smaller nested loop than trap (its L-stable damping
+// lands reversals slightly inside, and return-point memory locks the
+// minor loop — bistability is genuine Preisach physics; both are stable
+// orbits, trap reaches the major one). Major-loop loss is therefore
+// pinned on trap (test above); use trap for major-loop loss work.
+TEST(HystereticDevice, SolverModesAgree) {
+  constexpr double kDt = 25e-6, kFreq = 1e3, kPeriod = 1.0 / kFreq;
+  auto runSine = [&](bool bdf2, bool adaptive, double* meanAbsI) {
+    Engine eng;
+    eng.setTimeStep(kDt);
+    if (bdf2) eng.setIntegrator(power_engine::Integrator::TrBdf2);
+    if (adaptive) eng.setAdaptive(1e-3, 1e-9, 1e-3);
+    eng.circuit().addVoltageSource("V1", 1, 0, 0.0);
+    eng.circuit().addResistor("R1", 1, 2, 2.0);
+    eng.circuit().addHystereticInductor("H1", 2, 0, 10.0, 1e-4, 0.1, 1e-5, 1.5, 100.0,
+                                        0.0, 0.0);
+    eng.setStopTime(5 * kPeriod);
+    eng.start();
+    double isum = 0.0;
+    long long n = 0;
+    while (eng.status() == power_engine::SimulationStatus::Running) {
+      const double t = eng.currentSolution().t + kDt;
+      eng.circuit().findDevice("V1").value = 1.0 * std::sin(2.0 * kPiH * kFreq * t);
+      eng.step();
+      if (t > 4 * kPeriod) {
+        isum += std::abs(eng.deviceCurrent("H1"));
+        ++n;
+      }
+    }
+    *meanAbsI = isum / static_cast<double>(n);
+    return eng.hysteresisLoss("H1");
+  };
+  double iTrap = 0.0, iBdf2 = 0.0, iAdapt = 0.0;
+  // Anhysteretic B(H) is single-valued: closed-loop loss is pure
+  // trapezoid residue on the tanh curvature (~(dH/a)^3, here ~1e-5 J
+  // vs mJ major-loop scale), not physics. Bound it, don't zero it.
+  EXPECT_LT(runSine(false, false, &iTrap), 1e-4);
+  EXPECT_LT(runSine(true, false, &iBdf2), 1e-4);
+  EXPECT_LT(runSine(false, true, &iAdapt), 1e-4);
+  EXPECT_NEAR(iBdf2, iTrap, 0.01 * iTrap);
+  EXPECT_NEAR(iAdapt, iTrap, 0.01 * iTrap);
+}
+
+TEST(HystereticDevice, RejectsBadParams) {
+  Engine eng;
+  EXPECT_THROW(eng.circuit().addHystereticInductor("H", 1, 0, 0.0, 1e-4, 0.1, 1e-5, 1.5,
+                                                  100.0),
+               std::runtime_error);  // turns
+  EXPECT_THROW(eng.circuit().addHystereticInductor("H", 1, 0, 10.0, 0.0, 0.1, 1e-5, 1.5,
+                                                  100.0),
+               std::runtime_error);  // Ae
+  EXPECT_THROW(eng.circuit().addHystereticInductor("H", 1, 0, 10.0, 1e-4, 0.1, 1e-5, 0.0,
+                                                  100.0),
+               std::runtime_error);  // Bs
+  EXPECT_THROW(eng.circuit().addHystereticInductor("H", 1, 0, 10.0, 1e-4, 0.1, 1e-5, 1.5,
+                                                  100.0, -1.0),
+               std::runtime_error);  // Hc
+  EXPECT_THROW(eng.circuit().addHystereticInductor("H", 1, 1, 10.0, 1e-4, 0.1, 1e-5, 1.5,
+                                                  100.0),
+               std::runtime_error);  // same node
+  EXPECT_THROW(eng.hysteresisLoss("H"), std::runtime_error);  // unknown
+  eng.circuit().addResistor("R", 1, 0, 5.0);
+  EXPECT_THROW(eng.hysteresisLoss("R"), std::runtime_error);  // wrong type
+}
+
+// Netlist round-trip: H-device elaborates, runs, reports loss.
+TEST(HystereticDevice, NetlistRoundTrip) {
+  Engine eng;
+  eng.loadNetlist(R"(
+V1 1 0 1
+H1 1 0 N=10 AE=1e-4 LE=0.1 VE=1e-5 BS=1.5 A=100 HC=0 IC=0
+.tran 1u 200u
+.end
+)");
+  eng.start();
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  EXPECT_TRUE(std::isfinite(eng.deviceCurrent("H1")));
+  EXPECT_GE(eng.hysteresisLoss("H1"), 0.0);
+}

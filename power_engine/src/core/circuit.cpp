@@ -200,6 +200,38 @@ void Circuit::addSaturableInductor(const std::string& name, int n1, int n2, doub
   devices_.push_back(d);
 }
 
+void Circuit::addHystereticInductor(const std::string& name, int n1, int n2, double turns,
+                                    double ae, double le, double ve, double bs, double a,
+                                    double hc, double il0) {
+  checkNodes(n1, n2);
+  checkPositive(turns, "turns");
+  checkPositive(ae, "Ae");
+  checkPositive(le, "le");
+  checkPositive(ve, "Ve");
+  checkPositive(bs, "Bs");
+  checkPositive(a, "shape field a");
+  if (!(hc >= 0.0) || !std::isfinite(hc)) throw std::runtime_error("Hc must be finite >= 0");
+  if (!std::isfinite(il0)) throw std::runtime_error("Il0 must be finite");
+  checkNameUnique(devices_, name);
+  noteTopologyChange();
+  Device d = makeDevice(DeviceType::HystereticInductor, name, n1, n2, 0.0, il0);
+  d.hTurns = turns;
+  d.hAe = ae;
+  d.hLe = le;
+  d.hVe = ve;
+  d.hBs = bs;
+  d.hA = a;
+  d.hHc = hc;
+  d.i_prev = il0;
+  const double h0 = turns * il0 / le;
+  d.hH = h0;
+  d.hS = 0.0;
+  d.hB = bs * std::tanh(h0 / a);
+  d.hLoss = 0.0;
+  d.flux = turns * ae * d.hB;
+  devices_.push_back(d);
+}
+
 Device& Circuit::findDevice(const std::string& name) {
   return devices_[deviceIndex(name)];
 }

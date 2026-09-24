@@ -212,6 +212,21 @@
   voltage-source back-EMF with 1-step lag is violently unstable for stiff
   inductive coupling (gain L/(R*dt)) — never use it. Buck via network
   matches plain-L buck.
+- Hysteretic inductor (`device.h` HystereticInductor + solver explicit
+  companion, no Newton): N-turn winding on tanh B-H with Preisach-style
+  memory; tangent companion linearized at stage-start state, (H,s,B,loss)
+  advanced once per committed segment, flux states kept for BDF2,
+  signature salted per operating point (refactorize, never alias),
+  snapshot covers h-state (adaptive-safe), air-core floor under deep
+  saturation. Validated: small-signal tangent, buck-vs-plain-L,
+  major-loop loss vs standalone core (5%) + 4*Hc*Bs bounds, TR-BDF2 /
+  adaptive agreement, netlist round-trip. Lessons: (1) dλ/di needs /le
+  (caught by the tangent test, not review); (2) mid commits must not
+  clobber step-start flux (BDF2 ieq reads both — caught by linear-limit
+  BDF2 vs trap to 0.08%); (3) on major-loop drives TR-BDF2 can settle a
+  smaller nested loop than trap (L-stable damping lands reversals
+  inside; return-point memory locks it — genuine bistability, use trap
+  for major-loop loss).
 - Gapped-inductor synthesis (`magnetics.h` designGappedInductor): N from
   the Bsat bound (raised until the core fits inside N^2/L), gap from
   L = N^2/(Rcore+Rgap) with first-order fringing, then verified on a

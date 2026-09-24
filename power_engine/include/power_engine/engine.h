@@ -108,6 +108,9 @@ class Engine {
   double junctionTemp(const std::string& device) const;
   /// Accumulated energies (throws for non switch/diode).
   thermal::DeviceLoss deviceLoss(const std::string& device) const;
+  /// Accumulated hysteresis loop energy [J] of a hysteretic inductor
+  /// (hLoss density x core volume). Throws for other types / unknown.
+  double hysteresisLoss(const std::string& device) const;
 
   const SolverStats& solverStats() const { return solver_.stats(); }
 
