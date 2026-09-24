@@ -2,6 +2,7 @@
 // exported runNetlist seam: return codes and CSV content, no processes).
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -28,11 +29,22 @@ Rload 3 0 5
 )";
 
 void writeFile(const std::string& path, const std::string& content) {
-  FILE* f = std::fopen(path.c_str(), "w");
+  std::ofstream f(path, std::ios::binary | std::ios::trunc);
   if (!f) throw std::runtime_error("cannot open " + path);
-  std::fwrite(content.data(), 1, content.size(), f);
-  std::fclose(f);
+  f.write(content.data(), static_cast<std::streamsize>(content.size()));
+  f.close();
+  if (!f) throw std::runtime_error("cannot write " + path);
 }
+
+std::string readFile(const std::string& path) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) throw std::runtime_error("cannot open " + path);
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  return ss.str();
+}
+
+void removeFile(const std::string& path) { std::remove(path.c_str()); }
 
 pe::ParsedArgs argsFor(std::vector<std::string> argv) { return pe::parseArgs(argv); }
 
@@ -86,7 +98,7 @@ TEST(CliRun, BuckNetlistToCsv) {
   writeFile(path, kBuck);
   std::ostringstream out, err;
   const int rc = pe::runNetlist(argsFor({"--netlist", path}), out, err);
-  std::remove(path.c_str());
+  removeFile(path);
   EXPECT_EQ(rc, 0) << err.str();
   const auto rows = parseCsv(out.str());
   ASSERT_GE(rows.size(), 3u);  // header + settled rows
@@ -115,15 +127,9 @@ TEST(CliRun, ProbeFilterAndOutFile) {
       out, err);
   EXPECT_EQ(rc, 0) << err.str();
   EXPECT_TRUE(out.str().empty());  // file mode: nothing on stdout
-  FILE* f = std::fopen(csvPath.c_str(), "r");
-  ASSERT_TRUE(f != nullptr);
-  std::string content;
-  char buf[4096];
-  std::size_t m = 0;
-  while ((m = std::fread(buf, 1, sizeof(buf), f)) > 0) content.append(buf, m);
-  std::fclose(f);
-  std::remove(path.c_str());
-  std::remove(csvPath.c_str());
+  const std::string content = readFile(csvPath);
+  removeFile(path.c_str());
+  removeFile(csvPath.c_str());
   const auto rows = parseCsv(content);
   ASSERT_GE(rows.size(), 2u);
   EXPECT_EQ(rows[0].size(), 2u);  // time + v:3 only
@@ -146,8 +152,8 @@ TEST(CliRun, UsageErrorsAreExit2) {
   const std::string path2 = "pe_cli_nostop_tmp.net";
   writeFile(path2, "V1 1 0 5\nR1 1 0 10\n.end\n");
   EXPECT_EQ(pe::runNetlist(argsFor({"--netlist", path2}), out, err), 2);
-  std::remove(path.c_str());
-  std::remove(path2.c_str());
+  removeFile(path);
+  removeFile(path2);
 }
 
 TEST(CliRun, SimErrorsAreExit1) {
@@ -160,8 +166,8 @@ TEST(CliRun, SimErrorsAreExit1) {
   const std::string path3 = "pe_cli_bad_tmp.net";
   writeFile(path3, "Q1 1 0 0\n");
   EXPECT_EQ(pe::runNetlist(argsFor({"--netlist", path3}), out, err), 1);
-  std::remove(path.c_str());
-  std::remove(path3.c_str());
+  removeFile(path);
+  removeFile(path3);
 }
 
 TEST(CliRun, ParamOverrideAndMethod) {
@@ -176,5 +182,5 @@ TEST(CliRun, ParamOverrideAndMethod) {
   ASSERT_GE(rows.size(), 2u);
   const double tLast = std::stod(rows.back()[0]);
   EXPECT_NEAR(tLast, 0.0002, 1e-9);
-  std::remove(path.c_str());
+  removeFile(path);
 }
