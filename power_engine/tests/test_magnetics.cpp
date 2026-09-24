@@ -425,3 +425,83 @@ TEST(ReluctanceNetwork, RejectsBadDefinitions) {
   EXPECT_DOUBLE_EQ(net.branchFlux("R"), 0.0);
   EXPECT_THROW(net.branchFlux("NOPE"), std::runtime_error);
 }
+
+// Gapped-inductor synthesis (item 18): buck-style 200uH/0.6A ferrite
+// design closes the loop — turns+gap from closed form, L(i)/B/roll-off
+// verified on the saturable network, losses from the hysteresis/eddy
+// models. Copper/window/thermal stay caller-side (N + MLT reported).
+TEST(InductorDesign, BuckInductorClosesLoop) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};  // ferrite: no laminations
+  const InductorDesign d = designGappedInductor(spec, core, mat);
+  // Closed-form targets land exactly; network verification agrees.
+  EXPECT_EQ(d.turns, 5);
+  EXPECT_NEAR(d.gapM, 11e-6, 2e-6);
+  EXPECT_LT(d.bPeak, 0.75 * 0.4);
+  EXPECT_NEAR(d.lAtZero, 200e-6, 0.01 * 200e-6);
+  EXPECT_LT(d.rolloff, 0.1);
+  EXPECT_GE(d.hysteresisLossW, 0.0);
+  EXPECT_DOUBLE_EQ(d.eddyLossW, 0.0);  // unlaminated ferrite
+  // Deterministic: same inputs, bit-identical design.
+  const InductorDesign d2 = designGappedInductor(spec, core, mat);
+  EXPECT_EQ(d2.turns, d.turns);
+  EXPECT_DOUBLE_EQ(d2.gapM, d.gapM);
+  EXPECT_DOUBLE_EQ(d2.lAtZero, d.lAtZero);
+}
+
+TEST(InductorDesign, RejectsBadInputs) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  InductorSpec bad = spec;
+  bad.inductance = 0.0;
+  EXPECT_THROW(designGappedInductor(bad, core, mat), std::runtime_error);
+  CoreGeometry badCore = core;
+  badCore.ae = -1e-4;
+  EXPECT_THROW(designGappedInductor(spec, badCore, mat), std::runtime_error);
+  CoreMaterial badMat = mat;
+  badMat.bh.bs = 0.0;
+  EXPECT_THROW(designGappedInductor(spec, core, badMat), std::runtime_error);
+  // Infeasible: 100mH on this core wants a 36mm gap (limit 2.5mm).
+  InductorSpec huge = spec;
+  huge.inductance = 100e-3;
+  EXPECT_THROW(designGappedInductor(huge, core, mat), std::runtime_error);
+  // Infeasible: loss budget below the steel-core minor-loop loss.
+  InductorSpec budgeted = spec;
+  budgeted.lossBudgetW = 1e-12;
+  CoreMaterial steel{{1.8, 200.0, 50.0}, 5e-7, 0.3e-3};
+  EXPECT_THROW(designGappedInductor(budgeted, core, steel), std::runtime_error);
+}
+
+// Steel-laminated variant pins both loss paths (ferrite above is ~lossless).
+TEST(InductorDesign, SteelCoreLossPaths) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreMaterial steel{{1.8, 200.0, 50.0}, 5e-7, 0.3e-3};
+  const InductorDesign d = designGappedInductor(spec, core, steel);
+  // Ripple below the Hc clamps: hysteresis model resolves 0 by
+  // construction (documented); eddy carries the switching loss.
+  EXPECT_DOUBLE_EQ(d.hysteresisLossW, 0.0);
+  EXPECT_GT(d.eddyLossW, 0.0);
+  EXPECT_NEAR(d.lAtZero, 200e-6, 0.01 * 200e-6);
+  EXPECT_LT(d.rolloff, 0.1);
+}

@@ -60,10 +60,82 @@ class HysteresisCore {
 
 /// Classical lamination eddy-current loss density [W/m^3]:
 /// Pe = pi^2/(6*rho) * d^2 * f^2 * Bpk^2 (resistivity rho [Ohm m],
-/// lamination thickness d [m]). Pair with HysteresisCore loss (rate
+/// lamination thickness d [m], d = 0 for unlaminated ferrite -> Pe = 0).
+/// Pair with HysteresisCore loss (rate independent) for the two-term
+/// separation; derive an equivalent parallel resistance as
+/// R = Vrms^2/(P*Vol) at the operating point.
 /// independent) for the two-term separation; derive an equivalent parallel
 /// resistance as R = Vrms^2/(P*Vol) at the operating point.
 double eddyLossDensity(double rho, double thickness, double freqHz, double bPeak);
+
+// ---------------------------------------------------------------------------
+// Gapped-inductor synthesis (item 18: magnetics design). Closes the loop
+// on the analysis models above: given a core geometry + material (the
+// stand-in for a vendor core database, explicitly future work) and an
+// electrical spec, compute turns + gap, then VERIFY with the module's own
+// ReluctanceNetwork (saturable L(i) sweep), HysteresisCore (minor-loop
+// loss on the ripple) and eddyLossDensity. Deliberate boundary: copper
+// (window/fill/thermal) is the caller's job — N + MLT are reported for it,
+// and the thermal module couples core loss onward.
+// ---------------------------------------------------------------------------
+
+/// Core geometry (one magnetic path; toroid/E-core center leg equivalent).
+struct CoreGeometry {
+  double ae = 0.0;   ///< effective cross-section [m^2], > 0
+  double le = 0.0;   ///< effective path length [m], > 0
+  double ve = 0.0;   ///< effective volume [m^3], > 0
+  double mlt = 0.0;  ///< mean length per turn [m], > 0 (for copper calcs)
+};
+
+/// Core material: B-H (tanh) + resistivity/lamination for eddy loss.
+/// Ferrite: high rho with lamThickness 0 (no laminations -> Pe = 0).
+struct CoreMaterial {
+  HystereticMaterial bh;  ///< Bs > 0, a > 0, hc >= 0 (validated)
+  double rho = 0.0;       ///< resistivity [Ohm m], finite > 0
+  double lamThickness = 0.0;  ///< lamination thickness [m], >= 0
+};
+
+/// Electrical spec for the inductor.
+struct InductorSpec {
+  double inductance = 0.0;  ///< target L [H], > 0
+  double iPeak = 0.0;       ///< peak current incl. ripple [A], > 0
+  double iRms = 0.0;        ///< rms current [A], >= 0 (DC bias estimate)
+  double iRipplePkPk = 0.0;  ///< switching ripple pk-pk [A], >= 0
+  double freqHz = 0.0;      ///< ripple frequency [Hz], > 0
+  double bMaxMargin = 0.75;  ///< Bpeak budget as fraction of Bs, in (0, 1)
+  double maxGapFraction = 0.05;  ///< gap/le limit, in (0, 0.5)
+  double maxRolloff = 0.1;  ///< L(Ipeak)/L(0) drop limit, in (0, 1)
+  double lossBudgetW = 0.0;  ///< core loss budget [W], 0 = unenforced
+};
+
+/// Synthesized gapped inductor (all fields verified, not just computed).
+struct InductorDesign {
+  int turns = 0;          ///< integer N (>= 1)
+  double gapM = 0.0;      ///< gap length [m] (>= 0; fringing included)
+  double bPeak = 0.0;     ///< peak flux density [T] at Ipeak + ripple/2
+  double lAtZero = 0.0;   ///< secant L at 1mA from network sweep [H]
+  double lAtPeak = 0.0;   ///< secant L at Ipeak from network sweep [H]
+  double rolloff = 0.0;   ///< 1 - lAtPeak/lAtZero
+  /// Minor-loop hysteresis loss at ripple [W]. Model-resolution note:
+  /// HysteresisCore tracks H 1:1 below the Hc clamps, so switching
+  /// ripples (dH < 2*Hc, i.e. every sane design) report exactly 0 —
+  /// the model resolves major-loop loss, not minor-ripple loss. Eddy
+  /// carries the switching-frequency loss (standard two-term practice).
+  double hysteresisLossW = 0.0;
+  double eddyLossW = 0.0;        ///< eddy loss at ripple [W]
+};
+
+/// Synthesize + verify a gapped inductor. Procedure (standard gapped-core
+/// flow): N = ceil(L*Imax/(Bmax*Ae)) with Imax = iPeak + ripple/2 (Bsat
+/// bound); raise N until the core reluctance fits inside N^2/L (gap >= 0);
+/// solve gap from L = N^2/(Rcore + Rgap) with first-order fringing
+/// F = 1 + lg/sqrt(Ae); then verify L(i) on a saturable-core + gap series
+/// network, Bpeak, roll-off, minor-loop hysteresis loss (ripple triangle
+/// through HysteresisCore) and eddy loss. Throws on bad inputs or
+/// infeasible specs (gap over limit, B over Bs, roll-off over limit, loss
+/// over budget).
+InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry& core,
+                                    const CoreMaterial& mat);
 
 // ---------------------------------------------------------------------------
 // Reluctance-network magnetic domain + winding (circuit) interface.

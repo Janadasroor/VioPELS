@@ -25,7 +25,7 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 180 tests,
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 183 tests,
   24 binaries, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,

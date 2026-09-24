@@ -12,6 +12,11 @@ namespace magnetics {
 namespace {
 
 constexpr double kPi = std::numbers::pi;
+constexpr double kMu0 = 4.0 * std::numbers::pi * 1e-7;
+
+void reqPosFin(double v, const char* what) {
+  if (!(v > 0.0) || !std::isfinite(v)) throw std::runtime_error(what);
+}
 
 }  // namespace
 
@@ -64,8 +69,8 @@ double eddyLossDensity(double rho, double thickness, double freqHz, double bPeak
   if (!(rho > 0.0) || !std::isfinite(rho)) {
     throw std::runtime_error("eddy resistivity must be positive finite");
   }
-  if (!(thickness > 0.0) || !std::isfinite(thickness)) {
-    throw std::runtime_error("eddy thickness must be positive finite");
+  if (!(thickness >= 0.0) || !std::isfinite(thickness)) {
+    throw std::runtime_error("eddy thickness must be finite >= 0 (0 = no laminations)");
   }
   if (!(freqHz >= 0.0) || !std::isfinite(freqHz)) {
     throw std::runtime_error("eddy frequency must be finite >= 0");
@@ -279,6 +284,113 @@ double ReluctanceNetwork::equivalentInductance(const std::string& name) {
   }
   solved_ = false;
   return lambda;  // per 1A excitation
+}
+
+InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry& core,
+                                    const CoreMaterial& mat) {
+  reqPosFin(spec.inductance, "inductor spec needs inductance > 0");
+  reqPosFin(spec.iPeak, "inductor spec needs iPeak > 0");
+  if (!(spec.iRms >= 0.0) || !std::isfinite(spec.iRms))
+    throw std::runtime_error("inductor spec needs iRms finite >= 0");
+  if (!(spec.iRipplePkPk >= 0.0) || !std::isfinite(spec.iRipplePkPk))
+    throw std::runtime_error("inductor spec needs iRipplePkPk finite >= 0");
+  reqPosFin(spec.freqHz, "inductor spec needs freqHz > 0");
+  if (!(spec.bMaxMargin > 0.0) || !(spec.bMaxMargin < 1.0) || !std::isfinite(spec.bMaxMargin))
+    throw std::runtime_error("inductor spec needs bMaxMargin in (0, 1)");
+  if (!(spec.maxGapFraction > 0.0) || !(spec.maxGapFraction < 0.5) ||
+      !std::isfinite(spec.maxGapFraction))
+    throw std::runtime_error("inductor spec needs maxGapFraction in (0, 0.5)");
+  if (!(spec.maxRolloff > 0.0) || !(spec.maxRolloff < 1.0) || !std::isfinite(spec.maxRolloff))
+    throw std::runtime_error("inductor spec needs maxRolloff in (0, 1)");
+  if (!(spec.lossBudgetW >= 0.0) || !std::isfinite(spec.lossBudgetW))
+    throw std::runtime_error("inductor spec needs lossBudgetW finite >= 0");
+  reqPosFin(core.ae, "core geometry needs ae > 0");
+  reqPosFin(core.le, "core geometry needs le > 0");
+  reqPosFin(core.ve, "core geometry needs ve > 0");
+  reqPosFin(core.mlt, "core geometry needs mlt > 0");
+  reqPosFin(mat.bh.bs, "core material needs Bs > 0");
+  reqPosFin(mat.bh.a, "core material needs shape field a > 0");
+  if (!(mat.bh.hc >= 0.0) || !std::isfinite(mat.bh.hc))
+    throw std::runtime_error("core material needs Hc finite >= 0");
+  reqPosFin(mat.rho, "core material needs rho > 0");
+  if (!(mat.lamThickness >= 0.0) || !std::isfinite(mat.lamThickness))
+    throw std::runtime_error("core material needs lamThickness finite >= 0");
+
+  // Turns from the Bsat bound at worst-case current (peak + ripple/2).
+  const double iMax = spec.iPeak + 0.5 * spec.iRipplePkPk;
+  const double bMax = spec.bMaxMargin * mat.bh.bs;
+  long long n = static_cast<long long>(
+      std::ceil(spec.inductance * iMax / (bMax * core.ae)));
+  if (n < 1) n = 1;
+  // Core reluctance from the tanh initial slope (mu_i = Bs/a, exact).
+  const double rCore = core.le / ((mat.bh.bs / mat.bh.a) * core.ae);
+  // Raise N until the core fits inside N^2/L (gap reluctance >= 0).
+  for (long long k = 0; k < 1000000; ++k) {
+    const double rTot = static_cast<double>(n) * static_cast<double>(n) / spec.inductance;
+    if (rTot >= rCore) break;
+    ++n;
+  }
+  const double rTot = static_cast<double>(n) * static_cast<double>(n) / spec.inductance;
+  // Gap from L = N^2/(Rcore + Rgap), Rgap = lg/(mu0*Ae*F),
+  // F = 1 + lg/sqrt(Ae): closed form lg = K/(1 - K/s), K = dR*mu0*Ae.
+  const double dR = rTot - rCore;
+  const double s = std::sqrt(core.ae);
+  const double kk = dR * kMu0 * core.ae;
+  if (!(kk < s)) throw std::runtime_error("inductor spec infeasible: fringing swamps gap");
+  const double lg = kk / (1.0 - kk / s);
+  if (!(lg >= 0.0) || !std::isfinite(lg))
+    throw std::runtime_error("inductor spec infeasible: negative gap");
+  if (lg > spec.maxGapFraction * core.le)
+    throw std::runtime_error("inductor spec infeasible: gap over limit");
+  const double fr = 1.0 + lg / s;
+  const double rGap = lg / (kMu0 * core.ae * fr);
+
+  // Verify on a saturable-core + gap series network (the module's own model).
+  ReluctanceNetwork net;
+  net.addSaturableReluctance("core", 0, 1, core.le, core.ae, mat.bh.bs, mat.bh.a);
+  net.addReluctance("gap", 1, 0, rGap > 0.0 ? rGap : 1e-12);
+  net.addWinding("W", "core", static_cast<double>(n));
+  auto lambdaAt = [&](double i) {
+    net.setWindingCurrent("W", i);
+    net.solve();
+    return static_cast<double>(n) * net.windingFlux("W");
+  };
+  const double l0 = lambdaAt(1e-3) / 1e-3;
+  const double lPk = lambdaAt(spec.iPeak) / spec.iPeak;
+  const double bDc = net.branchFlux("core") / core.ae;
+  const double bAcPk = (0.5 * spec.iRipplePkPk) * l0 / (static_cast<double>(n) * core.ae);
+  const double bPeak = bDc + bAcPk;
+  if (!(bPeak <= mat.bh.bs) || !std::isfinite(bPeak))
+    throw std::runtime_error("inductor spec infeasible: Bpeak over Bs");
+  const double rolloff = 1.0 - lPk / l0;
+  if (!(rolloff <= spec.maxRolloff))
+    throw std::runtime_error("inductor spec infeasible: roll-off over limit");
+
+  // Minor-loop hysteresis loss on the ripple triangle (settle one cycle,
+  // measure the second: deterministic minor-loop loss density).
+  const double rippleRms = 0.5 * spec.iRipplePkPk / std::sqrt(3.0);
+  const double iDc = std::sqrt(std::max(spec.iRms * spec.iRms - rippleRms * rippleRms, 0.0));
+  const double hDc = static_cast<double>(n) * iDc / core.le;
+  const double dH = static_cast<double>(n) * spec.iRipplePkPk / core.le;
+  HysteresisCore hyst(mat.bh);
+  hyst.update(hDc);
+  constexpr int kTriSteps = 40;
+  auto triangle = [&]() {
+    for (int k = 1; k <= kTriSteps; ++k)
+      hyst.update(hDc - 0.5 * dH + dH * static_cast<double>(k) / kTriSteps);
+    for (int k = 1; k <= kTriSteps; ++k)
+      hyst.update(hDc + 0.5 * dH - dH * static_cast<double>(k) / kTriSteps);
+  };
+  triangle();  // settle onto the minor loop
+  const double before = hyst.loss();
+  triangle();
+  const double perCycle = hyst.loss() - before;
+  const double hystW = perCycle * spec.freqHz * core.ve;
+  const double eddyW =
+      eddyLossDensity(mat.rho, mat.lamThickness, spec.freqHz, bAcPk) * core.ve;
+  if (spec.lossBudgetW > 0.0 && hystW + eddyW > spec.lossBudgetW)
+    throw std::runtime_error("inductor spec infeasible: core loss over budget");
+  return InductorDesign{static_cast<int>(n), lg, bPeak, l0, lPk, rolloff, hystW, eddyW};
 }
 
 }  // namespace magnetics

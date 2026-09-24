@@ -209,6 +209,15 @@
   voltage-source back-EMF with 1-step lag is violently unstable for stiff
   inductive coupling (gain L/(R*dt)) — never use it. Buck via network
   matches plain-L buck.
+- Gapped-inductor synthesis (`magnetics.h` designGappedInductor): N from
+  the Bsat bound (raised until the core fits inside N^2/L), gap from
+  L = N^2/(Rcore+Rgap) with first-order fringing, then verified on a
+  saturable-core + gap series network (L(i) sweep, Bpeak, roll-off) with
+  minor-loop hysteresis + eddy loss. Geometry is an input (vendor core
+  database explicitly future); copper/window/thermal stay caller-side
+  (N + MLT reported; thermal module couples core loss onward). Model
+  limit, documented at the field: ripples below the Hc clamps report
+  exactly 0 hysteresis loss (eddy carries switching loss).
 - Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs
   (loadNetlist + setParameter re-elaboration per point), setup callback
   for wiring (PWM/thermal/loss specs, SolutionCallback windowed stats)
