@@ -5,6 +5,7 @@
 #define PE_VERSION "dev"
 #endif
 
+#include <cmath>
 #include <ostream>
 #include <stdexcept>
 
@@ -51,6 +52,17 @@ std::map<std::string, Command>& registry() {
 void registerCommand(Command cmd) { registry()[cmd.name] = std::move(cmd); }
 
 const std::map<std::string, Command>& commands() { return registry(); }
+
+bool parseDoubleStrict(const std::string& s, double& v) {
+  try {
+    std::size_t n = 0;
+    v = std::stod(s, &n);
+    if (n != s.size() || !std::isfinite(v)) return false;
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
 
 void printGlobalHelp(std::ostream& o, const char* version) {
   o << "pe: VioPELS power-electronics CLI (version " << version << ")\n\nCommands:\n";

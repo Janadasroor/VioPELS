@@ -9,9 +9,11 @@
 #include <vector>
 
 #include "cmd_run.h"
+#include "cmd_sweep.h"
 #include "pe.h"
 
 int main(int argc, char** argv) {
   pe::registerRunCommand();
+  pe::registerSweepCommand();
   return pe::dispatch(std::vector<std::string>(argv + 1, argv + argc), std::cout, std::cerr);
 }

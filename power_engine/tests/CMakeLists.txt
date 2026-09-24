@@ -10,7 +10,7 @@ FetchContent_MakeAvailable(googletest)
 set(PE_TESTS test_rc test_rlc test_switch test_buck test_netlist test_control test_thermal   test_converters test_magnetics test_adaptive test_recovery test_ac test_steadystate
   test_measurements test_waveforms test_loopgain test_loss_tables test_electrothermal
   test_multitone test_statespace test_machine   test_sweep test_integrator test_emi
-  test_sensing test_cli)
+  test_sensing test_cli test_cli_sweep)
 
 add_executable(test_rc test_rc.cpp)
 add_executable(test_rlc test_rlc.cpp)
@@ -40,6 +40,9 @@ add_executable(test_sensing test_sensing.cpp)
 add_executable(test_cli test_cli.cpp)
 target_include_directories(test_cli PRIVATE ${CMAKE_SOURCE_DIR}/power_engine/tools/pe)
 target_link_libraries(test_cli PRIVATE pe_cli)
+add_executable(test_cli_sweep test_cli_sweep.cpp)
+target_include_directories(test_cli_sweep PRIVATE ${CMAKE_SOURCE_DIR}/power_engine/tools/pe)
+target_link_libraries(test_cli_sweep PRIVATE pe_cli)
 
 foreach(t IN LISTS PE_TESTS)
   target_link_libraries(${t} PRIVATE power_engine power_engine_warnings GTest::gtest_main)
@@ -71,3 +74,4 @@ add_test(NAME Integrator COMMAND test_integrator)
 add_test(NAME Emi COMMAND test_emi)
 add_test(NAME Sensing COMMAND test_sensing)
 add_test(NAME Cli COMMAND test_cli)
+add_test(NAME CliSweep COMMAND test_cli_sweep)

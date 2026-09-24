@@ -25,7 +25,7 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 218 tests,
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 226 tests,
   24 binaries, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
@@ -56,6 +56,13 @@ specs, runs to `.tran tstop` (overridable), and writes `time,<probes>`
 CSV to stdout or `--out`. Exit codes: 0 ok, 1 sim error, 2 usage/input
 error. New features plug in as subcommands (one file + one registration;
 in-process test seam, no spawned processes in tests).
+
+`sweep` runs a parameter grid (`--axis K=list|lo:step:hi|uniform|gauss`,
+`--measure last|mean|min|max(PROBE)`, `--jobs`, `--yield`, `--stats`):
+```sh
+./build/power_engine/tools/pe sweep --netlist buck.net \
+  --axis RLOAD=4,5,6 --measure 'last(v:3)' --jobs 0
+```
 
 Build types: default is **Release** — unoptimized Eigen is ~17x slower
 (measured on the 6ms buck sim: 0.65s → 0.037s), so always benchmark and

@@ -36,6 +36,9 @@ struct ParsedArgs {
 // input (dangling --key, empty key); caller maps to exit 2.
 ParsedArgs parseArgs(const std::vector<std::string>& argv);
 
+// Strict finite-double parse (full-string match). Shared by commands.
+bool parseDoubleStrict(const std::string& s, double& v);
+
 struct Command {
   std::string name;     // subcommand word, e.g. "run"
   std::string summary;  // one line for global help

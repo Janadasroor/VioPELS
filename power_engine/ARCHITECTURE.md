@@ -259,6 +259,11 @@
   self-registration is silently dropped from static archives by the
   linker). Tested in-process (return codes + CSV, no spawned processes);
   installed with the library.
+- `pe sweep` over the sweep harness: list/range/uniform/gauss axes,
+  last/mean/min/max trajectory measures, --jobs threading (bitwise table
+  preserved), --yield/--stats to stderr, row errors as CSV data
+  (--stop-on-error rethrows). Per-point trajectories recorded via a
+  thread-local trace installed by the setup callback (R2 pattern).
 - Induction (`machine.h` induction section): dq synchronous-frame flux
   model (RK4) + exact steady-torque equivalent circuit as reference.
   Rotating machines use dq ODEs (position-varying mutuals have no MNA
