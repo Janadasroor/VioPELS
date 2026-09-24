@@ -353,11 +353,11 @@ TEST(StateSpaceExport, RemainingErrorPaths) {
 // MNA transient on the same circuit (export fidelity as a simulator).
 // RC charge 0 -> 5V: analytic v(t) = 5*(1-exp(-t/RC)) pins both.
 TEST(LinearStepper, RcStepMatchesMnaAndAnalytic) {
-  constexpr double kR = 10.0, kC = 100e-6, kDt = 10e-6, kStop = 5e-3;
+  constexpr double kRr = 10.0, kCr = 100e-6, kDt = 10e-6, kStop = 5e-3;
   Circuit c;
   c.addVoltageSource("V1", 1, 0, 0.0);
-  c.addResistor("R1", 1, 2, kR);
-  c.addCapacitor("C1", 2, 0, kC);
+  c.addResistor("R1", 1, 2, kRr);
+  c.addCapacitor("C1", 2, 0, kCr);
   const StateSpace ss = exportStateSpace(c, {"v:2"});
   ASSERT_EQ(ss.a.rows(), 1);
   power_engine::statespace::LinearStepper st(ss, kDt);
@@ -366,8 +366,8 @@ TEST(LinearStepper, RcStepMatchesMnaAndAnalytic) {
   power_engine::Engine eng;
   eng.setTimeStep(kDt);
   eng.circuit().addVoltageSource("V1", 1, 0, 0.0);
-  eng.circuit().addResistor("R1", 1, 2, kR);
-  eng.circuit().addCapacitor("C1", 2, 0, kC);
+  eng.circuit().addResistor("R1", 1, 2, kRr);
+  eng.circuit().addCapacitor("C1", 2, 0, kCr);
   eng.setStopTime(kStop);
   eng.start();
   double t = 0.0, maxErr = 0.0;
@@ -379,7 +379,7 @@ TEST(LinearStepper, RcStepMatchesMnaAndAnalytic) {
     const double v = eng.currentSolution().probes.at("v:2");
     maxErr = std::max(maxErr, std::abs(y - v));
     // Both track the analytic charge curve.
-    EXPECT_NEAR(y, 5.0 * (1.0 - std::exp(-t / (kR * kC))), 0.02 * 5.0) << "t=" << t;
+    EXPECT_NEAR(y, 5.0 * (1.0 - std::exp(-t / (kRr * kCr))), 0.02 * 5.0) << "t=" << t;
   }
   EXPECT_LT(maxErr, 0.01 * 5.0);
 }
