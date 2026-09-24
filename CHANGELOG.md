@@ -3,6 +3,49 @@
 All notable changes to `power_engine`. Format follows Keep a Changelog;
 versioning follows SemVer (`find_package(power_engine 0.1 CONFIG)`).
 
+## [Unreleased]
+
+FOC program (roadmap 19 + follow-ups): voltage-form cascaded FOC
+(speed PI + velocity FF -> iq*, dq PIs + decoupling, carrier PWM);
+SVPWM-fed variant (7-segment, Vdc/sqrt(3) ceiling); field weakening +
+MTPA (Rs-inclusive ellipse FF + voltage-trim FB, current circle, demand
+yoke; 48V drive holds 260 rad/s against 228 base); MTPV-lite
+(geometric iqRef backoff); sensing module (incremental Encoder +
+SpeedEstimator); sensorless observer (voltage-model flux + PLL, honest
+I-f startup with speed-scheduled handoff, encoder-tight bounds); joint
+PI anti-windup through the magnitude clamp (current outward-step
+revert + deep-corner outer freeze; 12V recovery dead time ~190ms ->
+~50ms). Debugging paid twice: codebase Park needs opposite decoupling
+signs to textbooks (plant-ID proven), and freeze-holds-entry beats
+back-calculation for the outer loop.
+
+Solver performance (roadmap 14d): event cursor over the .at-sorted edge
+list (amortized O(1) lookup/apply, rewind on early insert) — 22x on a
+2400-edge PWM run with bit-identical trajectories.
+
+Magnetics (roadmap 11/18): gapped-inductor synthesis (N from Bsat,
+gap with fringing, saturable-network verification, roll-off/Bpeak
+enforcement); winding copper + window fill; Dowell AC copper loss;
+hysteretic inductor device (explicit tangent companion, no Newton,
+in-circuit loop-area loss, H netlist form, `hysteresisLoss`); vendor
+core database stays future, thermal coupling caller-side.
+
+Ecosystem + tooling: `pe` CLI (subcommand registry; `run` netlist->CSV
+with overrides/methods/probes; `sweep` grids incl. deterministic MC +
+yield/stats; exit 0/1/2); FMI 3.0 co-simulation export (token check,
+no event mode, Float64-only, XSD-validated, ctypes-proven like 2.0);
+`LinearStepper` exact-ZOH runtime simulation of exports (RC/buck match
+MNA, proving export fidelity).
+
+Correctness: coverage 91.63% -> 93.96% (steadystate 100%/100%,
+statespace 99.4%/98.8%); statespace current-source sign fix (uniform
+KCL-leaving incidence; Vf-averaged-DC end-to-end) + Debug-only
+FullPivLU(0x0) guard fix; MSVC C4996/C4459 fixes; shooting rejects
+hysteretic memory loudly instead of converging wrong orbits.
+Declined with evidence: diode breakpoint location (straddle already
+mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
+domain stays <100 nodes). 232 tests / 27 suites, CI 11/11 green.
+
 ## [0.2.0] — 2026-09-22
 
 The competing-engine program: solver speed, stiff integrators,
