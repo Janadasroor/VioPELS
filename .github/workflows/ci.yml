@@ -143,5 +143,13 @@ jobs:
           --lib build/power_engine/libpower_engine.a --pe-include power_engine/include
           --fmi-include power_engine/fmi/include --eigen-include /usr/include/eigen3
           --workdir fmiwork
+      - name: Pack + ctypes functional check (FMI 3.0)
+        run: >
+          python3 power_engine/fmi/ctypes_check3.py --pack power_engine/fmi/fmi_pack.py
+          --lib build/power_engine/libpower_engine.a --pe-include power_engine/include
+          --fmi-include power_engine/fmi/include --eigen-include /usr/include/eigen3
+          --workdir fmi3work
       - name: XSD-validate modelDescription
         run: xmllint --noout --schema power_engine/fmi/schema/fmi2ModelDescription.xsd fmiwork/pack/modelDescription.xml
+      - name: XSD-validate modelDescription (FMI 3.0)
+        run: xmllint --noout --schema power_engine/fmi/schema/fmi3ModelDescription.xsd fmi3work/pack/modelDescription.xml

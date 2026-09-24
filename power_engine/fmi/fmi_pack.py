@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Pack a VioPELS netlist + I/O map into an FMI 2.0 Co-Simulation FMU.
+"""Pack a VioPELS netlist + I/O map into an FMI 2.0/3.0 Co-Simulation FMU.
 
 Usage:
   fmi_pack.py --name Buck --netlist buck.net --inputs V1 --outputs v:3 \\
       --lib build/power_engine/libpower_engine.a \\
       --pe-include power_engine/include --fmi-include power_engine/fmi/include \\
       --eigen-include /usr/include/eigen3 --out /tmp/Buck.fmu [--tstop 0.006]
+      [--fmi-version 2]
 
 Layout: modelDescription.xml + binaries/linux64/<Name>.so + resources/
 (model.netlist, io.txt, modelGuid.txt). The wrapper TU is model-agnostic;
-FMI2_FUNCTION_PREFIX bakes the model name into the exports (per standard).
+FMI2/3_FUNCTION_PREFIX bakes the model name into the exports (per standard).
+Version 3 uses fmi3_wrapper.cpp, fmiVersion 3.0 + instantiationToken (stored
+in modelGuid.txt, read as the token), Float64 variables with initial.
 """
 import argparse
 import os
@@ -25,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import preflight
 
 WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fmi_wrapper.cpp")
+WRAPPER3 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fmi3_wrapper.cpp")
 
 
 def esc(s):
@@ -44,9 +48,12 @@ def main():
     ap.add_argument("--eigen-include", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--tstop", default="0.006")
+    ap.add_argument("--fmi-version", default="2", choices=("2", "3"))
     ap.add_argument("--cxx", default="c++")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
+    if args.fmi_version not in ("2", "3"):
+        sys.exit("fmi-version must be 2 or 3")
 
     if not args.name.replace("_", "").isalnum() or args.name[0].isdigit():
         sys.exit("model name must be C-identifier-like")
@@ -114,9 +121,39 @@ def main():
     # Well-formedness now (schema check is the validator's job; CI runs xmllint).
     ET.parse(xml_path)
 
+    if args.fmi_version == "3":
+        vars3 = []
+        for i, d in enumerate(inputs):
+            vars3.append(
+                f'    <Float64 name="{esc(d)}" valueReference="{i}" '
+                f'causality="input" variability="continuous" initial="exact" start="0.0"/>')
+        for j, p in enumerate(outputs):
+            vars3.append(
+                f'    <Float64 name="{esc(p)}" valueReference="{len(inputs) + j}" '
+                f'causality="output" variability="continuous" initial="calculated"/>')
+        unknowns3 = "\n".join(
+            f'      <Output valueReference="{len(inputs) + j}"/>' for j in range(len(outputs)))
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="3.0" modelName="{esc(args.name)}" instantiationToken="{guid}">
+  <CoSimulation modelIdentifier="{esc(args.name)}_"/>
+  <ModelVariables>
+{chr(10).join(vars3)}
+  </ModelVariables>
+  <ModelStructure>
+{unknowns3}
+  </ModelStructure>
+</fmiModelDescription>
+"""
+        with open(xml_path, "w") as f:
+            f.write(xml)
+        ET.parse(xml_path)
+
     so = os.path.join(bind, f"{args.name}.so")
-    cmd = [args.cxx, "-shared", "-fPIC", "-O2",
-           f"-DFMI2_FUNCTION_PREFIX={args.name}_", WRAPPER,
+    if args.fmi_version == "3":
+        wrapper, prefix = WRAPPER3, f"-DFMI3_FUNCTION_PREFIX={args.name}_"
+    else:
+        wrapper, prefix = WRAPPER, f"-DFMI2_FUNCTION_PREFIX={args.name}_"
+    cmd = [args.cxx, "-shared", "-fPIC", "-O2", prefix, wrapper,
            "-I", args.pe_include, "-I", args.fmi_include, "-I", args.eigen_include,
            args.lib, "-o", so]
     r = subprocess.run(cmd, capture_output=True, text=True)

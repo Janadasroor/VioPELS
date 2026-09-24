@@ -287,7 +287,11 @@
   `ctypes_check.py`, vendored XSD): netlist + io map -> .fmu; inputs are
   source devices, outputs are probes; horizons master-driven; GUID/state
   machine enforced, unsupported calls honestly fmi2Error; engine is
-  non-assignable so instances live in unique_ptr.
+  non-assignable so instances live in unique_ptr. FMI 3.0 export mirrors
+  it (`fmi3_wrapper.cpp` with FMI3_FUNCTION_PREFIX, `--fmi-version 3`,
+  `ctypes_check3.py`, vendored 3.0 headers + XSD): instantiationToken
+  check, no event mode / intermediate update, Float64-only, DoStep
+  out-params driven, XSD-validated modelDescription.
 - Steady-state shooting (`steadystate.h`, `src/steadystate/`): Newton on
   the period map over continuous states (L currents, C voltages; diodes
   re-settle inside every period sim), finite-difference Jacobian,
@@ -432,6 +436,8 @@
     re-arm → accumulators/probes, proven bitwise-equivalent).
   - FMI 2.0 C ABI: HOSTILE. GUID/VR/state-machine enforced, unsupported
     calls honestly `fmi2Error`; engine exceptions never cross the ABI.
+  - FMI 3.0 C ABI: HOSTILE the same way (token/VR/state-machine, no event
+    mode, Float64-only, `fmi3Error` on anything else).
   - Sweep threading: per-point local `Engine` is safe, but setup/measure
     captures MUST be thread-safe when `jobs!=1` — keep per-point state in
     thread-locals (R2; the demo is the template) or recompute in measure.
