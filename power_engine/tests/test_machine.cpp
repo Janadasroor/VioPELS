@@ -964,3 +964,98 @@ TEST(PmsmFocSensorless, SpeedRampLoadStepAndOrientation) {
   EXPECT_NEAR(fxMean / nMean, kLam, 0.10 * kLam);
   EXPECT_LT(angErrMean / nMean, 0.09);  // < ~5 deg electrical
 }
+
+// Joint anti-windup through the magnitude clamp: on a 12V bus at
+// 100 rad/s demand the vector clamp binds while both current PIs sit
+// inside their SISO limits (+-Vdc/2) — without the joint revert both
+// integrators wind invisibly and the step-down recovery overshoots.
+TEST(PmsmFocAw, DeepSaturationStepDownRecovery) {
+  constexpr double kVdc = 12.0, kP = 2.0, kLam = 0.05, kRs = 0.5, kLs = 2e-3;
+  constexpr double kJ = 5e-5, kB = 5e-4, kDt = 1e-6, kWhi = 100.0, kWlo = 20.0;
+  constexpr double kTcar = 50e-6;
+  Engine eng;
+  eng.setTimeStep(kDt);
+  eng.circuit().addVoltageSource("Vdc", 7, 0, kVdc);
+  eng.circuit().addSwitch("SAh", 7, 1, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SAl", 1, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SBh", 7, 2, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SBl", 2, 0, 5e-3, 1e6, true);
+  eng.circuit().addSwitch("SCh", 7, 3, 5e-3, 1e6, false);
+  eng.circuit().addSwitch("SCl", 3, 0, 5e-3, 1e6, true);
+  eng.circuit().addResistor("RA", 1, 4, kRs);
+  eng.circuit().addInductor("LA", 4, 6, kLs, 0.0);
+  eng.circuit().addVoltageSource("EA", 6, 5, 0.0);
+  eng.circuit().addResistor("RB", 2, 10, kRs);
+  eng.circuit().addInductor("LB", 10, 11, kLs, 0.0);
+  eng.circuit().addVoltageSource("EB", 11, 5, 0.0);
+  eng.circuit().addResistor("RC", 3, 12, kRs);
+  eng.circuit().addInductor("LC", 12, 13, kLs, 0.0);
+  eng.circuit().addVoltageSource("EC", 13, 5, 0.0);
+  constexpr double kStop = 1000e-3, kStepT = 300e-3;
+  eng.setStopTime(kStop);
+  FocParams fp;
+  fp.motor = {2, kLam, kRs, kLs, kLs, {kJ, kB}};
+  fp.vdc = kVdc;
+  FocController foc(fp);
+  const MechanicalParams mech{kJ, kB};
+  MechanicalState rotor{0.0, 0.0};
+  eng.start();
+  ThreePhase im{0.0, 0.0, 0.0};
+  double nextSamp = kTcar / 2.0;
+  double iqPeak = 0.0, tSettle = -1.0;
+  while (eng.status() == SimulationStatus::Running) {
+    const double t = eng.time();
+    const ThreePhase e = pmsmEmf(rotor.theta, rotor.omega, fp.motor);
+    eng.circuit().findDevice("EA").value = e.a;
+    eng.circuit().findDevice("EB").value = e.b;
+    eng.circuit().findDevice("EC").value = e.c;
+    eng.step();
+    if (t + kDt >= nextSamp) {
+      im = {eng.deviceCurrent("LA"), eng.deviceCurrent("LB"), eng.deviceCurrent("LC")};
+      nextSamp += kTcar;
+    }
+    const double wref = t < kStepT ? std::min(kWhi, kWhi * t / 50e-3) : kWlo;
+    const double alpha = (t < kStepT && t < 50e-3) ? kWhi / 50e-3 : 0.0;
+    const auto g = foc.update(t, wref, alpha, rotor.omega, im, kP * rotor.theta, kDt);
+    eng.setSwitch("SAh", g.aHi);
+    eng.setSwitch("SAl", !g.aHi);
+    eng.setSwitch("SBh", g.bHi);
+    eng.setSwitch("SBl", !g.bHi);
+    eng.setSwitch("SCh", g.cHi);
+    eng.setSwitch("SCl", !g.cHi);
+    stepMechanical(rotor, pmsmTorque(foc.id(), foc.iq(), fp.motor), 0.0, mech, kDt);
+    if (t >= kStepT + 50e-3) {
+      iqPeak = std::max(iqPeak, std::abs(foc.iq() - foc.iqRef()));
+      if (tSettle < 0.0 && std::abs(rotor.omega - kWlo) <= 0.05 * kWlo) tSettle = t;
+    }
+  }
+  // Deep corner recovered: dead time gone (outer freeze holds the speed
+  // integrator at clamp entry instead of the SISO rail), current error
+  // stays small throughout, final within band.
+  EXPECT_GT(tSettle, kStepT);
+  EXPECT_LT(tSettle - kStepT, 500e-3);
+  EXPECT_LT(iqPeak, 0.5);
+  EXPECT_NEAR(rotor.omega, kWlo, 0.05 * kWlo);
+}
+
+// Joint-AW mechanism pin (no Engine): asymmetric persistent errors with
+// the vector clamp bound but both PIs inside SISO limits (+-6). SISO-only
+// AW lets both integrators run to their rails, rotating the unsaturated
+// demand toward (6, 6) = 45 deg; the joint revert freezes integrators at
+// clamp entry (~zero here: clamped from tick 0), so the applied angle
+// holds the P-only direction atan2(0.16, 0.27) ~= 30.6 deg. errW = 0
+// throughout, so the outer loop contributes nothing (no ramp, no rail).
+TEST(PmsmFocAw, VectorClampHoldsAppliedAngle) {
+  FocParams fp;
+  fp.motor = {2, 0.05, 0.5, 2e-3, 2e-3, {5e-5, 5e-4}};
+  fp.vdc = 12.0;  // vmax = 5.7
+  FocController foc(fp);
+  // id = -0.27 (err_d = 0.27), iq = -0.16 (iqRef = 0, err_q = 0.16):
+  // unsat (5.09, 3.02), m = 5.92 (clamped). w = 0 kills decoupling FF.
+  const ThreePhase iSat{-0.27, 0.2736, -0.0036};
+  for (int k = 0; k < 2000; ++k) foc.update(k * 50e-6, 0.0, 0.0, 0.0, iSat, 0.0, 50e-6);
+  EXPECT_GT(std::hypot(foc.vd(), foc.vq()), 5.69);  // clamp was engaged
+  EXPECT_LT(std::hypot(foc.vd(), foc.vq()), 5.71);
+  EXPECT_GT(std::atan2(foc.vq(), foc.vd()) * 180.0 / kPi, 28.0);
+  EXPECT_LT(std::atan2(foc.vq(), foc.vd()) * 180.0 / kPi, 33.0);
+}

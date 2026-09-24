@@ -66,6 +66,7 @@ class PiController {
   /// One control tick: err in engineering units, dt in seconds.
   double update(double err, double dt);
   double integrator() const { return integ_; }
+  double ki() const { return ki_; }  ///< integral gain (joint anti-windup sign)
 
  private:
   double kp_ = 0.0;

@@ -146,7 +146,12 @@
   commanded phase voltages, normalize to Vdc/2, read states at the
   intra-period time; linear ceiling Vdc/sqrt(3), ~15% more bus; current
   loops identical). Both validated on the ramp + load-step profile
-  (track +-3%, dip + recover, id ~ 0, iq tracks ref/demand).
+  (track +-3%, dip + recover, id ~ 0, iq tracks ref/demand). Joint
+  anti-windup through the magnitude clamp: current integrators revert
+  outward steps; speed integrator held at entry in deep corners only
+  (clamped + a current PI SISO-railed + err demanding more) — kills the
+  ~190ms recovery dead time on a 12V bus, no torque derating (applied v
+  identical), validated profiles untouched.
   Field weakening + MTPA (opt-in FocParams::fieldWeakening, default off):
   feedforward (static Rs-inclusive ellipse root, instant bounded bulk)
   + feedback trim (integrator on |v_cmd|-0.97*vmax, +-5A authority),

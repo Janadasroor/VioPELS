@@ -72,7 +72,9 @@ double pmsmTorque(double id, double iq, const PmsmParams& m);
 /// (FocParams::modulation; lo = !hi). Current gains derive from
 /// the motor (crossover target); speed gains default to the validated
 /// reference-motor values. Conditional-integration anti-windup on all
-/// PIs; voltage magnitude clamped preserving angle. Shares plant
+/// PIs; voltage magnitude clamped preserving angle, with joint
+/// anti-windup through the clamp (current integrators revert
+/// outward steps; speed integrator held at entry in deep corners). Shares plant
 /// histories: safe to retune mid-run.
 struct FocParams {
   PmsmParams motor;

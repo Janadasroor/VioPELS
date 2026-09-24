@@ -228,7 +228,9 @@ FocController::FocController(const FocParams& p)
 FocController::Gates FocController::update(double t, double wRef, double accelFF, double w,
                                            const ThreePhase& i, double thE, double dt) {
   park(i.a, i.b, i.c, thE, id_, iq_);
-  iqRef_ = std::min(std::max(speedPi_.update(wRef - w, dt) +
+  const double errW = wRef - w;
+  const double sInteg0 = speedPi_.integrator();
+  iqRef_ = std::min(std::max(speedPi_.update(errW, dt) +
                                  (p_.motor.mech.j * accelFF + p_.motor.mech.b * wRef) / kTq_,
                              0.0),
                     p_.speedMaxIq);
@@ -323,6 +325,7 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
       iqRef_ *= lim / im;
     }
   }
+  const double idInteg0 = pid_.integrator(), iqInteg0 = piq_.integrator();
   double vd = pid_.update(idRef_ - id_, dt) + we * p_.motor.lq * iq_;
   double vq = piq_.update(iqRef_ - iq_, dt) + we * (p_.motor.lambdaPm - p_.motor.ld * id_);
   // Decoupling signs are load-bearing (refine R-deep-dive 2026-09-23): for
@@ -337,6 +340,31 @@ FocController::Gates FocController::update(double t, double wRef, double accelFF
   const double m = std::hypot(vd, vq);
   vmagPrev_ = m;  // next step's FW feedback sees this step's demand
   if (m > vmax && m > 0.0) {
+    // Joint anti-windup through the vector clamp, two levels. (1) Current
+    // loops: each PI's own conditional integration only sees its SISO
+    // limits (+-Vdc/2), so a railed magnitude clamp with both PIs
+    // in-range winds both integrators invisibly. Revert per-axis the
+    // tick's integrator step iff it grew |v| (d|v|^2/dInteg = 2*v*ki):
+    // axes correcting inward keep integrating.
+    if (vd * pid_.ki() * (pid_.integrator() - idInteg0) > 0.0)
+      pid_.setIntegrator(idInteg0);
+    if (vq * piq_.ki() * (piq_.integrator() - iqInteg0) > 0.0)
+      piq_.setIntegrator(iqInteg0);
+    // (2) Outer speed loop: SISO-freezing caps its output at max demand
+    // but leaves the integrator at the rail-entry value, whose unwind
+    // journey is the deep-corner recovery dead time (~190ms measured on
+    // a 12V bus). While the vector clamp binds AND a current PI is
+    // SISO-railed (deep corner, not a normal transient) AND the speed
+    // error demands more, hold the speed integrator at entry too. No
+    // torque derating: applied voltage is clamp-identical either way,
+    // only states differ. Normal transients (24V accel, FW cruise, load
+    // steps with current headroom) never see a SISO-railed current PI
+    // and are untouched (proven by the unchanged validation suite).
+    const double pidOut = vd - we * p_.motor.lq * iq_;
+    const double piqOut = vq - we * (p_.motor.lambdaPm - p_.motor.ld * id_);
+    const bool sisoRailed = pidOut >= p_.vdc / 2.0 || pidOut <= -p_.vdc / 2.0 ||
+                            piqOut >= p_.vdc / 2.0 || piqOut <= -p_.vdc / 2.0;
+    if (errW > 0.0 && sisoRailed) speedPi_.setIntegrator(sInteg0);
     vd *= vmax / m;
     vq *= vmax / m;
   }
