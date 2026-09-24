@@ -65,6 +65,19 @@ double HysteresisCore::update(double h) {
   return b;
 }
 
+double dowellFactor(int layers, double delta) {
+  if (layers < 1) throw std::runtime_error("dowell needs layers >= 1");
+  if (!(delta >= 0.0) || !std::isfinite(delta))
+    throw std::runtime_error("dowell needs delta finite >= 0");
+  if (delta < 1e-3) return 1.0;  // series limit (exact to ~1e-12)
+  const double m = static_cast<double>(layers);
+  const double t1 =
+      (std::sinh(2.0 * delta) + std::sin(2.0 * delta)) / (std::cosh(2.0 * delta) - std::cos(2.0 * delta));
+  const double t2 = (2.0 * (m * m - 1.0) / 3.0) *
+                    (std::sinh(delta) - std::sin(delta)) / (std::cosh(delta) + std::cos(delta));
+  return delta * (t1 + t2);
+}
+
 double eddyLossDensity(double rho, double thickness, double freqHz, double bPeak) {
   if (!(rho > 0.0) || !std::isfinite(rho)) {
     throw std::runtime_error("eddy resistivity must be positive finite");
@@ -320,6 +333,7 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   reqPosFin(winding.resistivity, "winding spec needs resistivity > 0");
   if (!(winding.maxFill > 0.0) || !(winding.maxFill < 1.0) || !std::isfinite(winding.maxFill))
     throw std::runtime_error("winding spec needs maxFill in (0, 1)");
+  if (winding.layers < 1) throw std::runtime_error("winding spec needs layers >= 1");
 
   // Turns from the Bsat bound at worst-case current (peak + ripple/2).
   const double iMax = spec.iPeak + 0.5 * spec.iRipplePkPk;
@@ -398,14 +412,21 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
       static_cast<double>(n) * winding.wireAreaM2 / core.windowArea;
   if (!(fill <= winding.maxFill))
     throw std::runtime_error("inductor spec infeasible: window fill over limit");
-  const double copperW =
-      core.mlt * static_cast<double>(n) * winding.resistivity / winding.wireAreaM2 *
-      spec.iRms * spec.iRms;
-  if (spec.lossBudgetW > 0.0 && hystW + eddyW + copperW > spec.lossBudgetW)
+  const double rDc =
+      core.mlt * static_cast<double>(n) * winding.resistivity / winding.wireAreaM2;
+  const double copperW = rDc * spec.iRms * spec.iRms;
+  // Dowell AC copper on the ripple (round wire -> square equivalent,
+  // skin depth from winding resistivity, full layers).
+  const double dWire = 2.0 * std::sqrt(winding.wireAreaM2 / kPi);
+  const double hSq = 0.25 * kPi * dWire;
+  const double skin = std::sqrt(winding.resistivity / (kPi * spec.freqHz * kMu0));
+  const double iAc = 0.5 * spec.iRipplePkPk / std::sqrt(3.0);
+  const double acCopperW = dowellFactor(winding.layers, hSq / skin) * rDc * iAc * iAc;
+  if (spec.lossBudgetW > 0.0 && hystW + eddyW + copperW + acCopperW > spec.lossBudgetW)
     throw std::runtime_error("inductor spec infeasible: total loss over budget");
   return InductorDesign{static_cast<int>(n), lg,        bPeak,  l0,
                         lPk,               rolloff,    hystW,  eddyW,
-                        copperW,           fill};
+                        copperW,           acCopperW,  fill};
 }
 
 }  // namespace magnetics

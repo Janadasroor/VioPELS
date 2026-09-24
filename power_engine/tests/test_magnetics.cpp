@@ -733,3 +733,51 @@ H1 1 0 N=10 AE=1e-4 LE=0.1 VE=1e-5 BS=1.5 A=100 HC=0 IC=0
   EXPECT_TRUE(std::isfinite(eng.deviceCurrent("H1")));
   EXPECT_GE(eng.hysteresisLoss("H1"), 0.0);
 }
+
+// Dowell AC resistance factor vs an independent implementation (Python
+// cmath, separate code path) + limiting behavior + validation.
+TEST(DowellFactor, MatchesIndependentReference) {
+  using power_engine::magnetics::dowellFactor;
+  EXPECT_NEAR(dowellFactor(1, 0.5), 1.005542, 1e-6);
+  EXPECT_NEAR(dowellFactor(1, 1.0), 1.085636, 1e-6);
+  EXPECT_NEAR(dowellFactor(2, 1.0), 1.406009, 1e-6);
+  EXPECT_NEAR(dowellFactor(3, 1.5), 5.114672, 1e-6);
+  EXPECT_NEAR(dowellFactor(4, 2.0), 18.141221, 1e-6);
+  EXPECT_NEAR(dowellFactor(2, 0.1), 1.000042, 1e-6);
+  // Series limit (no 0/0): thin wire reads exactly 1.
+  EXPECT_DOUBLE_EQ(dowellFactor(1, 0.0), 1.0);
+  EXPECT_DOUBLE_EQ(dowellFactor(5, 1e-4), 1.0);
+  // Proximity grows with layers; factor never below DC.
+  EXPECT_GT(dowellFactor(2, 1.0), dowellFactor(1, 1.0));
+  EXPECT_GT(dowellFactor(4, 2.0), dowellFactor(2, 2.0));
+  EXPECT_GE(dowellFactor(3, 0.7), 1.0);
+  EXPECT_THROW(dowellFactor(0, 1.0), std::runtime_error);
+  EXPECT_THROW(dowellFactor(2, -0.5), std::runtime_error);
+}
+
+// AC copper in the design flow: 3-layer buck winding adds Dowell loss on
+// the ripple (independent hand calc: Fr(3, 1.898784) = 9.372221).
+TEST(InductorDesign, AcCopperLoss) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  WindingSpec wound{1e-6};
+  wound.layers = 3;
+  const InductorDesign d = designGappedInductor(spec, core, mat, wound);
+  EXPECT_EQ(d.turns, 5);
+  EXPECT_NEAR(d.acCopperLossW, 0.000241803, 1e-9);
+  EXPECT_GT(d.acCopperLossW, 0.0);
+  // Tight total budget trips on the AC term.
+  InductorSpec budgeted = spec;
+  budgeted.lossBudgetW = 1e-4;
+  EXPECT_THROW(designGappedInductor(budgeted, core, mat, wound), std::runtime_error);
+  WindingSpec noLayers{1e-6};
+  noLayers.layers = 0;
+  EXPECT_THROW(designGappedInductor(spec, core, mat, noLayers), std::runtime_error);
+}

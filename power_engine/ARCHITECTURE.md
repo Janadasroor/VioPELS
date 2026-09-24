@@ -233,8 +233,9 @@
   saturable-core + gap series network (L(i) sweep, Bpeak, roll-off) with
   minor-loop hysteresis + eddy loss. Geometry is an input (vendor core
   database explicitly future); window fill (N*Aw/Awindow <= max) and DC
-  copper (MLT*N*rho/Aw at Irms) are enforced/reported, loss budget covers
-  total; thermal coupling stays caller-side (feed total loss onward).
+  copper (MLT*N*rho/Aw at Irms) are enforced/reported, Dowell AC copper
+  (Fr from layer count at ripple RMS) joins the loss budget, thermal
+  coupling stays caller-side (feed total loss onward).
   Model limit, documented at the field: ripples below the Hc clamps report
   exactly 0 hysteresis loss (eddy carries switching loss).
 - Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs

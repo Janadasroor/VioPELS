@@ -88,15 +88,21 @@ struct CoreGeometry {
   double windowArea = 0.0;  ///< winding window [m^2], > 0 (fill check)
 };
 
-/// Winding (copper) spec. DC copper only: proximity/Dowell AC needs layer
-/// and window-breadth detail beyond Ae/le (documented future with a
-/// layer model); at switching ripple the DC + core terms dominate the
-/// budget check honestly.
+/// Winding (copper) spec. AC proximity/skin via Dowell below; gap-fringe
+/// loss (2D FEM territory) stays out by design.
 struct WindingSpec {
-  double wireAreaM2 = 0.0;  ///< copper per turn [m^2], > 0
+  double wireAreaM2 = 0.0;  ///< copper per turn [m^2], > 0 (round wire)
   double resistivity = 17.2e-9;  ///< winding resistivity [Ohm m], > 0
   double maxFill = 0.4;  ///< window fill limit N*Aw/Aw_window, in (0, 1)
+  int layers = 1;  ///< winding layers m >= 1 (Dowell proximity count)
 };
+
+/// Dowell AC resistance factor Fr = Rac/Rdc for m full layers at
+/// normalized thickness d = h/delta (h = (pi/4)*d_wire square-equivalent,
+/// delta = skin depth, porosity 1): d*((sinh2d+sin2d)/(cosh2d-cos2d) +
+/// (2(m^2-1)/3)*(sinhd-sind)/(coshd+cosd)). d < 1e-3 returns exactly 1
+/// (series limit; avoids 0/0). Throws unless m >= 1 and d finite >= 0.
+double dowellFactor(int layers, double delta);
 
 /// Core material: B-H (tanh) + resistivity/lamination for eddy loss.
 /// Ferrite: high rho with lamThickness 0 (no laminations -> Pe = 0).
@@ -135,6 +141,7 @@ struct InductorDesign {
   double hysteresisLossW = 0.0;
   double eddyLossW = 0.0;        ///< eddy loss at ripple [W]
   double copperLossW = 0.0;      ///< DC copper loss at Irms [W]
+  double acCopperLossW = 0.0;    ///< Dowell AC copper at ripple RMS [W]
   double windowFill = 0.0;       ///< N*wireArea/windowArea (<= maxFill)
 };
 
