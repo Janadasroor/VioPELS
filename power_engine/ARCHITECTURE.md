@@ -351,7 +351,10 @@
   capacitance blocks. Duty averaging + textbook duty-to-output transfer
   (Erickson §7.3 operating-point sensitivity). Validated: averaged buck
   reproduces the lossy second-order model within 0.5%/0.5deg;
-  eigenvalues are the LC poles. Lesson (coverage-driven bugfix): keep ONE
+  eigenvalues are the LC poles. `LinearStepper` runs an exported model
+  at runtime (exact ZOH via augmented-matrix exponential, Eigen
+  MatrixFunctions): RC/buck step responses match MNA transients, which
+  proves the export is a faithful simulator, not just algebra. Lesson (coverage-driven bugfix): keep ONE
   incidence convention — current-source incidence was injection-form (+1
   at into-node) while gn/aff/eL are KCL-leaving, negating all Isrc B
   columns and double-counting source values into const; invisible until

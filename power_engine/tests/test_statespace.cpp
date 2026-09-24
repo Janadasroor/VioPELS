@@ -348,3 +348,87 @@ TEST(StateSpaceExport, RemainingErrorPaths) {
   badU << kVin;
   EXPECT_THROW(evalDutyTransfer(on, off, 0.5, badU, 0, s), std::runtime_error);
 }
+
+// Runtime stepper: exact-ZOH simulation of an exported model matches the
+// MNA transient on the same circuit (export fidelity as a simulator).
+// RC charge 0 -> 5V: analytic v(t) = 5*(1-exp(-t/RC)) pins both.
+TEST(LinearStepper, RcStepMatchesMnaAndAnalytic) {
+  constexpr double kR = 10.0, kC = 100e-6, kDt = 10e-6, kStop = 5e-3;
+  Circuit c;
+  c.addVoltageSource("V1", 1, 0, 0.0);
+  c.addResistor("R1", 1, 2, kR);
+  c.addCapacitor("C1", 2, 0, kC);
+  const StateSpace ss = exportStateSpace(c, {"v:2"});
+  ASSERT_EQ(ss.a.rows(), 1);
+  power_engine::statespace::LinearStepper st(ss, kDt);
+  Eigen::VectorXd u(2);
+  u << 5.0, 1.0;  // [Vin, const 1]
+  power_engine::Engine eng;
+  eng.setTimeStep(kDt);
+  eng.circuit().addVoltageSource("V1", 1, 0, 0.0);
+  eng.circuit().addResistor("R1", 1, 2, kR);
+  eng.circuit().addCapacitor("C1", 2, 0, kC);
+  eng.setStopTime(kStop);
+  eng.start();
+  double t = 0.0, maxErr = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.circuit().findDevice("V1").value = 5.0;  // input step at t = 0+
+    eng.step();
+    t = eng.currentSolution().t;
+    const double y = st.step(u)(0);
+    const double v = eng.currentSolution().probes.at("v:2");
+    maxErr = std::max(maxErr, std::abs(y - v));
+    // Both track the analytic charge curve.
+    EXPECT_NEAR(y, 5.0 * (1.0 - std::exp(-t / (kR * kC))), 0.02 * 5.0) << "t=" << t;
+  }
+  EXPECT_LT(maxErr, 0.01 * 5.0);
+}
+
+// Buck ON-state: two-state stepper tracks MNA through an LC transient.
+TEST(LinearStepper, BuckOnStateTracksMna) {
+  constexpr double kDt = 1e-6, kStop = 500e-6;
+  const StateSpace ss = exportStateSpace(buck(true), {"v:3"});
+  ASSERT_EQ(ss.a.rows(), 2);
+  power_engine::statespace::LinearStepper st(ss, kDt);
+  Eigen::VectorXd u(2);
+  u << 12.0, 1.0;
+  power_engine::Engine eng;
+  eng.setTimeStep(kDt);
+  eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+  eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+  eng.circuit().addInductor("L1", 2, 3, 200e-6, 0.0);
+  eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+  eng.circuit().addResistor("Rload", 3, 0, 5.0);
+  eng.setStopTime(kStop);
+  eng.start();
+  double maxErr = 0.0, maxV = 0.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    eng.step();
+    const double y = st.step(u)(0);
+    const double v = eng.currentSolution().probes.at("v:3");
+    maxV = std::max(maxV, std::abs(v));
+    maxErr = std::max(maxErr, std::abs(y - v));
+  }
+  EXPECT_GT(maxV, 1.0);  // transient actually exercised
+  EXPECT_LT(maxErr, 0.02 * maxV);
+}
+
+TEST(LinearStepper, RejectsBadConfig) {
+  const StateSpace ss = exportStateSpace(buck(true), {"v:3"});
+  EXPECT_THROW(power_engine::statespace::LinearStepper(ss, 0.0), std::runtime_error);
+  EXPECT_THROW(power_engine::statespace::LinearStepper(ss, -1e-6), std::runtime_error);
+  StateSpace bad = ss;
+  bad.a.resize(3, 3);
+  EXPECT_THROW(power_engine::statespace::LinearStepper(bad, 1e-6), std::runtime_error);
+  power_engine::statespace::LinearStepper st(ss, 1e-6);
+  Eigen::VectorXd x0(5);
+  EXPECT_THROW(st.reset(x0), std::runtime_error);
+  Eigen::VectorXd u(5);
+  EXPECT_THROW(st.step(u), std::runtime_error);
+  st.reset();
+  Eigen::VectorXd x2(2);
+  x2 << 1.0, 2.0;
+  st.reset(x2);
+  EXPECT_EQ(st.state(), x2);
+}

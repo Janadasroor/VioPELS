@@ -56,5 +56,27 @@ std::complex<double> evalDutyTransfer(const StateSpace& on, const StateSpace& of
                                       double duty, const Eigen::VectorXd& uSs,
                                       int outIdx, std::complex<double> s);
 
+/// Exact zero-order-hold stepper for an exported model: the runtime half
+/// of the analysis-only export (frozen topology, linear dynamics without
+/// MNA). Augmented-matrix exponential computed once per (model, dt):
+/// [x+; 1] = exp([[A,B],[0,0]]*dt) * [x; u], y = C*x+ + D*u. Throws on
+/// dimension mismatch or non-positive/finite dt.
+class LinearStepper {
+ public:
+  LinearStepper(const StateSpace& ss, double dt);
+  void reset();
+  void reset(const Eigen::VectorXd& x0);  ///< throws on size mismatch
+  /// Advance one ZOH step with input held at u; returns y.
+  Eigen::VectorXd step(const Eigen::VectorXd& u);  ///< throws on size mismatch
+  const Eigen::VectorXd& state() const { return x_; }
+
+ private:
+  Eigen::MatrixXd exx_;
+  Eigen::MatrixXd exu_;
+  Eigen::MatrixXd c_;
+  Eigen::MatrixXd d_;
+  Eigen::VectorXd x_;
+};
+
 }  // namespace statespace
 }  // namespace power_engine

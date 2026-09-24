@@ -4,6 +4,7 @@
 #include <map>
 #include <stdexcept>
 #include <utility>
+#include <unsupported/Eigen/MatrixFunctions>
 
 #include "power_engine/circuit.h"
 
@@ -492,6 +493,38 @@ std::complex<double> evalDutyTransfer(const StateSpace& on, const StateSpace& of
   if (!lu.isInvertible()) throw std::runtime_error("evalDutyTransfer: sI-A singular");
   const Eigen::VectorXcd x = lu.solve(bHat.cast<std::complex<double>>());
   return (avg.c.row(outIdx).cast<std::complex<double>>() * x)(0);
+}
+
+LinearStepper::LinearStepper(const StateSpace& ss, double dt)
+    : c_(ss.c), d_(ss.d), x_(Eigen::VectorXd::Zero(ss.a.rows())) {
+  const auto nx = ss.a.rows(), nu = ss.b.cols();
+  if (ss.a.cols() != nx) throw std::runtime_error("LinearStepper: A must be square");
+  if (ss.b.rows() != nx) throw std::runtime_error("LinearStepper: B rows must match A");
+  if (ss.c.cols() != nx) throw std::runtime_error("LinearStepper: C cols must match A");
+  if (ss.d.rows() != ss.c.rows() || ss.d.cols() != nu)
+    throw std::runtime_error("LinearStepper: D shape must match C rows x B cols");
+  if (!(dt > 0.0) || !std::isfinite(dt))
+    throw std::runtime_error("LinearStepper: dt must be positive finite");
+  // Augmented exponential: [x+; 1] = exp([[A,B],[0,0]]*dt) * [x; u].
+  Eigen::MatrixXd m = Eigen::MatrixXd::Zero(nx + nu, nx + nu);
+  m.topLeftCorner(nx, nx) = ss.a;
+  m.topRightCorner(nx, nu) = ss.b;
+  const Eigen::MatrixXd e = (m * dt).exp();
+  exx_ = e.topLeftCorner(nx, nx);
+  exu_ = e.topRightCorner(nx, nu);
+}
+
+void LinearStepper::reset() { x_.setZero(); }
+
+void LinearStepper::reset(const Eigen::VectorXd& x0) {
+  if (x0.size() != x_.size()) throw std::runtime_error("LinearStepper: x0 size mismatch");
+  x_ = x0;
+}
+
+Eigen::VectorXd LinearStepper::step(const Eigen::VectorXd& u) {
+  if (u.size() != exu_.cols()) throw std::runtime_error("LinearStepper: u size mismatch");
+  x_ = exx_ * x_ + exu_ * u;
+  return c_ * x_ + d_ * u;
 }
 
 }  // namespace statespace
