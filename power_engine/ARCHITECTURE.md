@@ -332,7 +332,13 @@
   capacitance blocks. Duty averaging + textbook duty-to-output transfer
   (Erickson §7.3 operating-point sensitivity). Validated: averaged buck
   reproduces the lossy second-order model within 0.5%/0.5deg;
-  eigenvalues are the LC poles.
+  eigenvalues are the LC poles. Lesson (coverage-driven bugfix): keep ONE
+  incidence convention — current-source incidence was injection-form (+1
+  at into-node) while gn/aff/eL are KCL-leaving, negating all Isrc B
+  columns and double-counting source values into const; invisible until
+  a test used Isrc (zeros elsewhere). Uniform leaving-form now, pinned
+  by Isrc hand matrices + Vf-averaged-DC. Debug-only FullPivLU(0x0)
+  assert on sourceless blocks fixed by deferred construction.
 - Loop-gain analysis (`loopgain.h`, `src/loopgain/`): series injection at
   the sense node of the closed-loop buck (v_sense = vout + vinj, Vref AC=0),
   Gcl = vout/vinj via FourierMeter, T = -Gcl/(1+Gcl), worst-PM crossing +

@@ -52,7 +52,6 @@ StateSpace exportStateSpace(const Circuit& circuit,
   if (n == 0) throw std::runtime_error("statespace: no dynamic nodes");
 
   Eigen::MatrixXd gn = Eigen::MatrixXd::Zero(n, n);
-  Eigen::VectorXd rhsI = Eigen::VectorXd::Zero(n);
   Eigen::VectorXd aff = Eigen::VectorXd::Zero(n);
   // Incidence columns for dynamic elements (ground rows skipped).
   std::vector<std::pair<int, int>> lNodes;  // (n1, n2) per inductor
@@ -128,9 +127,9 @@ StateSpace exportStateSpace(const Circuit& circuit,
         break;
       }
       case DeviceType::CurrentSource:
+        // Incidence is KCL-leaving form like eL/eC (+1 at n1, -1 at n2);
+        // values enter through gAI/gDI input columns, never const.
         isrcs.push_back({d.n1, d.n2, d.name, d.value});
-        if (r1 >= 0) rhsI(r1) -= d.value;
-        if (r2 >= 0) rhsI(r2) += d.value;
         break;
       default:
         throw std::runtime_error("statespace: unsupported device '" + d.name + "'");
@@ -218,8 +217,6 @@ StateSpace exportStateSpace(const Circuit& circuit,
   for (int i = 0; i < nD; ++i) {
     for (int j = 0; j < nC; ++j) eCD(i, j) = eC(rowsD[i], j);
   }
-  Eigen::VectorXd rhsA = subV(rhsI, rowsA);
-  Eigen::VectorXd rhsD = subV(rhsI, rowsD);
   const Eigen::VectorXd affA = subV(aff, rowsA);
   const Eigen::VectorXd affD = subV(aff, rowsD);
 
@@ -235,47 +232,53 @@ StateSpace exportStateSpace(const Circuit& circuit,
       if (rowsF[i] == r) wF(i, k) = vsrcs[k].gain;
     }
   }
-  // I-source incidence onto A/D rows.
+  // I-source incidence onto A/D rows (KCL-leaving form, like eL/eC).
   Eigen::MatrixXd gAI = Eigen::MatrixXd::Zero(nA, nI);
   Eigen::MatrixXd gDI = Eigen::MatrixXd::Zero(nD, nI);
   for (int k = 0; k < nI; ++k) {
     const int r1 = nodeRow(idx, isrcs[k].n1);
     const int r2 = nodeRow(idx, isrcs[k].n2);
     for (int i = 0; i < nA; ++i) {
-      if (rowsA[i] == r1) gAI(i, k) -= 1.0;
-      if (rowsA[i] == r2) gAI(i, k) += 1.0;
+      if (rowsA[i] == r1) gAI(i, k) += 1.0;
+      if (rowsA[i] == r2) gAI(i, k) -= 1.0;
     }
     for (int i = 0; i < nD; ++i) {
-      if (rowsD[i] == r1) gDI(i, k) -= 1.0;
-      if (rowsD[i] == r2) gDI(i, k) += 1.0;
+      if (rowsD[i] == r1) gDI(i, k) += 1.0;
+      if (rowsD[i] == r2) gDI(i, k) -= 1.0;
     }
   }
 
-  Eigen::FullPivLU<Eigen::MatrixXd> luA(gAA);
+  // Deferred construction: FullPivLU asserts on empty (0x0) blocks in
+  // Debug (no-A-node or no-D-node circuits are legitimate); guarded use
+  // below only touches the factorization when its block is nonempty.
+  Eigen::FullPivLU<Eigen::MatrixXd> luA;
+  if (nA > 0) luA.compute(gAA);
   if (nA > 0 && !luA.isInvertible()) {
     throw std::runtime_error("statespace: singular algebraic block (floating node?)");
   }
   Eigen::MatrixXd mDD = Eigen::MatrixXd::Zero(nD, nD);
   for (int j = 0; j < nC; ++j) mDD += cVals[j] * eCD.col(j) * eCD.col(j).transpose();
-  Eigen::FullPivLU<Eigen::MatrixXd> luM(mDD);
+  Eigen::FullPivLU<Eigen::MatrixXd> luM;
+  if (nD > 0) luM.compute(mDD);
   if (nD > 0 && !luM.isInvertible()) {
     throw std::runtime_error("statespace: singular capacitance block (C-V loop?)");
   }
   Eigen::VectorXd lDiag(nL);
   for (int k = 0; k < nL; ++k) lDiag(k) = lVals[k];
 
-  // v_A = S * (-(gAD*v_D + eLA*i_L + gAF*v_F + gAI*u_I + rhsA + affA)).
+  // v_A = S * (-(gAD*v_D + eLA*i_L + gAF*v_F + gAI*u_I + affA)).
   // Assemble A (states [i_L; v_D]) and B column by column via solves.
   const int nX = nL + nD;
   Eigen::MatrixXd A = Eigen::MatrixXd::Zero(nX, nX);
   Eigen::MatrixXd B = Eigen::MatrixXd::Zero(nX, nU);
   // Helper: given (v_D coeffs per state/input + const), solve v_A part.
-  // KCL_A residual pieces: for state/input direction q with v_D-part qD,
-  // i_L-part qL, v_F-part qF, I-part qI, const qc:
+  // Everything is KCL-leaving form (like eL/eC/gn: +1 at branch from-node,
+  // -1 at to-node; aff carries diode-Vf leaving constants): driven source
+  // values enter through gAI/gDI input columns, never const, so:
   //   v_A,q = -luA.solve(gAD*qD + eLA*qL + gAF*qF + gAI*qI + qc).
   // Inductor rows: L*di/dt = eLA'*v_A + eLD'*v_D + eLF'*v_F.
   // KCL_D rows: M*dv_D/dt = -(gDA*v_A + gDD*v_D + gDF*v_F + eLD*i_L)
-  //                            + gDI*u_I + rhsD + affD.
+  //                            -(gDI*u_I + affD).
   auto vAfor = [&](const Eigen::VectorXd& qD, const Eigen::VectorXd& qL,
                    const Eigen::VectorXd& qF, const Eigen::VectorXd& qI,
                    const Eigen::VectorXd& qc) {
@@ -331,9 +334,8 @@ StateSpace exportStateSpace(const Circuit& circuit,
     } else {
       qc = affA;
     }
-    // KCL_D const part also needs rhsD/affD only for the const column.
-    Eigen::VectorXd qDc = Eigen::VectorXd::Zero(nD);
-    if (c == nU - 1) qDc = rhsD + affD;
+    // KCL_D const part needs affD only for the const column (driven
+    // source values live in their own columns via gAI/gDI).
     Eigen::VectorXd qIc = Eigen::VectorXd::Zero(nI);
     const Eigen::VectorXd vA = vAfor(Eigen::VectorXd::Zero(nD), Eigen::VectorXd::Zero(nL),
                                      qF, (c < nV + nI && c >= nV) ? qI : qIc, qc);
@@ -350,7 +352,8 @@ StateSpace exportStateSpace(const Circuit& circuit,
       if (nA > 0) rhs += gDA * vA;
       if (nF > 0) rhs += gDF * qF;
       if (c >= nV && c < nV + nI) rhs += gDI * qI;
-      rhs += qDc;
+      if (c == nU - 1) rhs += affD;  // diode-Vf affine only (driven values
+      // live in their own columns, never const)
       dv = -luM.solve(rhs);
     }
     for (int k = 0; k < nL; ++k) B(k, c) = di(k);
@@ -379,7 +382,9 @@ StateSpace exportStateSpace(const Circuit& circuit,
       for (int c = 0; c < nU; ++c) D(o, c) = wF(fi, c);
     } else if (di >= 0) {
       C(o, nL + di) = 1.0;
-    } else if (ai >= 0) {
+    } else {
+      // ai >= 0 guaranteed: F/A/D partition every non-ground row, and
+      // unknown/ground outputs throw in probeNode/nodeRow above.
       // Row ai of v_A expression: recompute via unit solves.
       for (int c = 0; c < nX; ++c) {
         Eigen::VectorXd qD = Eigen::VectorXd::Zero(nD);
@@ -405,8 +410,6 @@ StateSpace exportStateSpace(const Circuit& circuit,
         }
         D(o, c) = vAfor(Eigen::VectorXd::Zero(nD), Eigen::VectorXd::Zero(nL), qF, qI, qc)(ai);
       }
-    } else {
-      throw std::runtime_error("statespace: output node not found");
     }
   }
 

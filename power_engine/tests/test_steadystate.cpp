@@ -177,3 +177,131 @@ TEST(SteadyState, RewindToReproducesUninterruptedRun) {
   }
   EXPECT_NEAR(rw.time(), 100e-6, 1e-12);  // 1ulp summation order, not drift
 }
+
+// Shooting through coupled-inductor states (kinds 1+2): PWM-driven RL
+// with a loaded secondary reaches a periodic orbit; linear map so Newton
+// is exact after the first residual.
+TEST(SteadyState, CoupledInductorConverges) {
+  constexpr double kT = 50e-6;
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 10.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+  eng.circuit().addCoupledInductors("W1", 2, 0, 3, 0, 200e-6, 200e-6, 0.9);
+  eng.circuit().addResistor("Rprim", 2, 0, 50.0);
+  eng.circuit().addResistor("Rsec", 3, 0, 50.0);
+  eng.scheduleSwitch("S1", true, 0.0);
+  eng.scheduleSwitch("S1", false, 0.5 * kT);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = kT;
+  cfg.maxIters = 20;
+  const ShootingResult r = solvePeriodicSteadyState(eng, 0.0, cfg);
+  EXPECT_TRUE(r.converged);
+  EXPECT_GT(eng.solverStats().steps, 0);
+}
+
+// Shooting through a saturable inductor (kind 3 + flux/newton_ik refresh):
+// gentle buck (below the knee) converges.
+TEST(SteadyState, SaturableInductorConverges) {
+  constexpr double kT = 50e-6;
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+  eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+  eng.circuit().addSaturableInductor("Y1", 2, 3, 200e-6, 20e-6, 2.0, 0.0);
+  eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+  eng.circuit().addResistor("Rload", 3, 0, 5.0);
+  eng.scheduleSwitch("S1", true, 0.0);
+  eng.scheduleSwitch("S1", false, 0.5 * kT);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = kT;
+  cfg.maxIters = 30;
+  const ShootingResult r = solvePeriodicSteadyState(eng, 0.0, cfg);
+  EXPECT_TRUE(r.converged);
+  EXPECT_NEAR(avgOnePeriod(eng, kT), 6.0, 0.05 * 6.0);
+}
+
+// Orbit start ahead of now: positions forward with runUntil first.
+TEST(SteadyState, FutureT0PositionsForward) {
+  constexpr double kT = 50e-6;
+  Engine eng;
+  buildCcmBuck(eng, 1e-6);
+  for (double t = 0.0; t < 4.0 * kT; t += kT) {
+    eng.scheduleSwitch("S1", true, t);
+    eng.scheduleSwitch("S1", false, t + 0.5 * kT);
+  }
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = kT;
+  const ShootingResult r = solvePeriodicSteadyState(eng, 2.0 * kT, cfg);
+  EXPECT_TRUE(r.converged);
+  EXPECT_NEAR(eng.time(), 2.0 * kT, 1e-9);
+  EXPECT_NEAR(avgOnePeriod(eng, kT), 6.0, 0.02 * 6.0);
+}
+
+// Graceful non-convergence: one iteration from cold start cannot close
+// the orbit; best-effort state rewinds to t0 honestly (no throw).
+TEST(SteadyState, NonConvergenceIsHonest) {
+  constexpr double kT = 50e-6;
+  Engine eng;
+  buildCcmBuck(eng, 1e-6);
+  eng.scheduleSwitch("S1", true, 0.0);
+  eng.scheduleSwitch("S1", false, 0.5 * kT);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = kT;
+  cfg.maxIters = 1;
+  const ShootingResult r = solvePeriodicSteadyState(eng, 0.0, cfg);
+  EXPECT_FALSE(r.converged);
+  EXPECT_EQ(r.iters, 1);
+  EXPECT_TRUE(std::isfinite(r.residual));
+  EXPECT_EQ(eng.time(), 0.0);
+}
+
+// Validation edges: bad tols, bad t0, t0 behind now.
+TEST(SteadyState, MoreBadConfigThrows) {
+  Engine eng;
+  buildCcmBuck(eng, 1e-6);
+  eng.scheduleSwitch("S1", true, 0.0);
+  eng.scheduleSwitch("S1", false, 0.5 * 50e-6);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = 50e-6;
+  ShootingConfig bad = cfg;
+  bad.relTol = 0.0;
+  EXPECT_THROW(solvePeriodicSteadyState(eng, 0.0, bad), std::runtime_error);
+  bad = cfg;
+  bad.fdStep = 0.0;
+  EXPECT_THROW(solvePeriodicSteadyState(eng, 0.0, bad), std::runtime_error);
+  EXPECT_THROW(solvePeriodicSteadyState(eng, -1.0, cfg), std::runtime_error);
+  for (int k = 0; k < 100; ++k) eng.step();
+  ASSERT_GT(eng.time(), 0.0);
+  EXPECT_THROW(solvePeriodicSteadyState(eng, 0.0, cfg), std::runtime_error);
+}
+
+// Deep-saturation shooting: Newton overshoots from cold start, forcing
+// backtracking halves (and possibly an honest non-converge). Either way
+// the line-search machinery is exercised, never a throw.
+TEST(SteadyState, DeepSaturationBacktracks) {
+  constexpr double kT = 50e-6;
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+  eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+  eng.circuit().addSaturableInductor("Y1", 2, 3, 200e-6, 20e-6, 0.3, 0.0);
+  eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+  eng.circuit().addResistor("Rload", 3, 0, 5.0);
+  eng.scheduleSwitch("S1", true, 0.0);
+  eng.scheduleSwitch("S1", false, 0.5 * kT);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = kT;
+  cfg.maxIters = 6;
+  const ShootingResult r = solvePeriodicSteadyState(eng, 0.0, cfg);
+  EXPECT_TRUE(std::isfinite(r.residual));
+  EXPECT_EQ(eng.time(), 0.0);
+}
