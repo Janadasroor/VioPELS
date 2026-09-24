@@ -165,6 +165,13 @@ class Engine {
   std::vector<int> probeNodes_;
   std::vector<std::string> probeKeys_;
   std::vector<SwitchEvent> events_;  // sorted by .at
+  // Cursor: first index not known-applied (all before it are applied).
+  // The step loop's next-event search starts here and breaks at the first
+  // at >= tNext (sorted) instead of scanning all E events per sub-step
+  // (O(E^2) total on PWM-heavy runs, measured dominant). Maintained by
+  // schedule/clear/reset/apply paths below; pure optimization, no
+  // trajectory change.
+  std::size_t eventCursor_ = 0;
   // Phase 3 netlist state.
   std::string netlistSource_;
   netlist::NetlistResult net_;

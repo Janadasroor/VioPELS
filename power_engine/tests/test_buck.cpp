@@ -108,3 +108,33 @@ TEST(BuckScheduledEvents, NonAlignedDtMatchesDutyTheory) {
       << "avg=" << voutAvg << " expected=" << expected;
   EXPECT_GT(eng.solverStats().diodeEvents, 0);
 }
+
+// Event cursor rewind (item 14d): an edge scheduled mid-run earlier than
+// the next pending edge (backdated by a slow controller) rewinds the
+// cursor and fires as due. Without the rewind it would sit unapplied
+// forever (stale cursor skips it), leaving a pending edge behind.
+TEST(BuckScheduledEvents, BackdatedMidRunScheduleFires) {
+  Engine eng;
+  eng.setTimeStep(3e-6);
+  eng.circuit().addVoltageSource("Vin", 1, 0, 12.0);
+  eng.circuit().addSwitch("S1", 1, 2, 5e-3, 1e6, true);
+  eng.circuit().addDiode("D1", 0, 2, 0.0, 10e-3, 1e6);
+  eng.circuit().addInductor("L1", 2, 3, 200e-6, 0.0);
+  eng.circuit().addCapacitor("C1", 3, 0, 200e-6, 0.0);
+  eng.circuit().addResistor("Rload", 3, 0, 5.0);
+  eng.scheduleSwitch("S1", false, 0.2e-3);
+  eng.scheduleSwitch("S1", true, 0.4e-3);
+  eng.scheduleSwitch("S1", false, 1.0e-3);
+  eng.setStopTime(2e-3);
+  eng.start();
+  while (eng.status() == power_engine::SimulationStatus::Running && eng.time() < 0.5e-3)
+    eng.step();
+  ASSERT_TRUE(eng.status() == power_engine::SimulationStatus::Running);
+  ASSERT_TRUE(eng.circuit().switchClosed("S1"));  // 0.4ms ON edge fired
+  eng.scheduleSwitch("S1", false, 0.35e-3);  // backdated past fired edges: rewinds cursor
+  eng.step();
+  EXPECT_FALSE(eng.circuit().switchClosed("S1"));  // fired immediately as due
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  EXPECT_EQ(eng.pendingEventCount(), 0u);
+  EXPECT_FALSE(eng.circuit().switchClosed("S1"));
+}

@@ -38,15 +38,21 @@ void Engine::scheduleSwitch(const std::string& name, bool closed, double at) {
   const SwitchEvent ev{at, name, closed, false};
   if (events_.empty() || !(ev.at < events_.back().at)) {
     events_.push_back(ev);
+    // Appended at/after the back: never before the cursor (no rewind).
   } else {
     const auto it = std::upper_bound(
         events_.begin(), events_.end(), ev.at,
         [](double t, const SwitchEvent& e) { return t < e.at; });
+    const auto pos = static_cast<std::size_t>(it - events_.begin());
+    if (pos < eventCursor_) eventCursor_ = pos;  // revisit earlier edge
     events_.insert(it, ev);
   }
 }
 
-void Engine::clearScheduledEvents() { events_.clear(); }
+void Engine::clearScheduledEvents() {
+  events_.clear();
+  eventCursor_ = 0;
+}
 
 void Engine::applyPwmSpecs() {
   if (!hasNetlist() || net_.pwms.empty()) {
@@ -177,6 +183,7 @@ void Engine::start() {
 
 void Engine::resetScheduledEvents() {
   for (auto& e : events_) e.applied = false;
+  eventCursor_ = 0;
 }
 
 SolverState Engine::saveSolverState() const { return solver_.saveState(); }
@@ -224,8 +231,12 @@ void Engine::runUntil(double tEnd) {
 }
 
 void Engine::applyDueEvents(double tNow) {
-  for (auto& e : events_) {
-    if (!e.applied && e.at <= tNow + kTimeEps) {
+  // Sorted order: due events form a prefix from the cursor; apply and
+  // advance in one pass (amortized O(1) per event over the run).
+  for (; eventCursor_ < events_.size(); ++eventCursor_) {
+    auto& e = events_[eventCursor_];
+    if (e.at > tNow + kTimeEps) break;
+    if (!e.applied) {
       circuit_.setSwitch(e.name, e.closed);
       e.applied = true;
     }
@@ -241,10 +252,17 @@ void Engine::step() {
     applyDueEvents(solver_.time());
     while (solver_.time() < tTarget - kTimeEps) {
       const double tNow = solver_.time();
-      // Next pending event strictly after now.
+      // Next pending event strictly after now: first unapplied edge past
+      // the cursor (sorted; all before it applied). Same minimum the full
+      // scan found, without the O(E) pass.
       double tNext = tTarget;
-      for (const auto& e : events_) {
-        if (!e.applied && e.at > tNow + kTimeEps && e.at < tNext) tNext = e.at;
+      for (std::size_t i = eventCursor_; i < events_.size(); ++i) {
+        const auto& e = events_[i];
+        if (e.at >= tNext) break;
+        if (!e.applied && e.at > tNow + kTimeEps) {
+          tNext = e.at;
+          break;
+        }
       }
       if (tNext > tTarget) tNext = tTarget;
       preStepLossHooks();

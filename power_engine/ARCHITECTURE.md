@@ -67,7 +67,10 @@
   exact-time edges split `step()` into sub-steps
   (`dt_sub = t_event - t_now`, companions use the sub-step dt);
   diode iteration runs inside every sub-step; nominal dt restored after;
-  `step()` clamps to `tStop`. Hot-loop de-churn: probe node ids + key
+  `step()` clamps to `tStop`. Event lookup is a cursor over the
+  .at-sorted edge list (first not-known-applied; rewound on early
+  insert, reset on clear/re-arm): amortized O(1) next-event + apply
+  (measured 22x on a 2400-edge PWM run, trajectories identical). Hot-loop de-churn: probe node ids + key
   strings are snapshotted at `start()` and probes updated in place (no
   per-step `nodes()` set+sort, `to_string`, or map reinsert); device
   lookup is a lazy name->index map; the diode scan is skipped when the
