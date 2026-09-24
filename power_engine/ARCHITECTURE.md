@@ -223,10 +223,12 @@
   adaptive agreement, netlist round-trip. Lessons: (1) dλ/di needs /le
   (caught by the tangent test, not review); (2) mid commits must not
   clobber step-start flux (BDF2 ieq reads both — caught by linear-limit
-  BDF2 vs trap to 0.08%); (3) on major-loop drives TR-BDF2 can settle a
+  BDF2 vs trap to 0.08%);   (3) on major-loop drives TR-BDF2 can settle a
   smaller nested loop than trap (L-stable damping lands reversals
   inside; return-point memory locks it — genuine bistability, use trap
-  for major-loop loss).
+  for major-loop loss). Shooting rejects hysteretic circuits loudly
+  (memory has no slot kind) instead of converging the wrong orbit;
+  statespace rejects them the same way.
 - Gapped-inductor synthesis (`magnetics.h` designGappedInductor): N from
   the Bsat bound (raised until the core fits inside N^2/L), gap from
   L = N^2/(Rcore+Rgap) with first-order fringing, then verified on a

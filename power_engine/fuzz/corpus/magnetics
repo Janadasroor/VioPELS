@@ -1,3 +1,6 @@
+H1 7 8 N=10 AE=1e-4 LE=0.1 VE=1e-5 BS=1.5 A=100 HC=50
+R4 7 0 10
+R5 8 0 10
 .model T1 transformer RATIO=2
 T1 1 2 3 4 MODEL=T1
 W1 1 2 3 4 L1=1m L2=1m K=0.9

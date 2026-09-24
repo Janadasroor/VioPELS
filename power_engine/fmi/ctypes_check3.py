@@ -137,6 +137,15 @@ def main():
         fail("bad token accepted")
     if inst(eventMode=True) is not None:
         fail("event mode accepted by CS-only FMU")
+    req = (ctypes.c_uint * 1)(0)
+    c_iv = lib[P + "fmi3InstantiateCoSimulation"]
+    c_iv.restype = ctypes.c_void_p
+    c_iv.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_bool,
+                     ctypes.c_bool, ctypes.c_bool, ctypes.c_bool, ctypes.c_void_p,
+                     ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    if c_iv(b"iv", token.encode(), res.encode(), False, False, False, False,
+            req, 1, None, None, None):
+        fail("intermediate variables accepted by non-providing FMU")
 
     def get(c, vr):
         v = (ctypes.c_double * len(vr))()

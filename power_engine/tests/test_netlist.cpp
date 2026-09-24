@@ -73,6 +73,7 @@ D1 0 2 MODEL=DD1
 L1 2 3 200u IC=0.1
 C1 3 0 200u
 Rload 3 0 5
+H1 3 0 N=10 AE=1e-4 LE=0.1 VE=1e-5 BS=1.5 A=100 HC=50 IC=0
 T1 4 0 5 0 RATIO=2
 Rsec 5 0 10
 .control pwm switch=S1 freq={FREQ} duty={DUTY} deadtime=100n
@@ -84,6 +85,7 @@ Rsec 5 0 10
   auto a = p.parse(text);
   auto b = p.parse(a.serialize());
   ASSERT_EQ(a.circuit.devices().size(), b.circuit.devices().size());
+  int hIdx = -1;
   for (std::size_t i = 0; i < a.circuit.devices().size(); ++i) {
     const auto& da = a.circuit.devices()[i];
     const auto& db = b.circuit.devices()[i];
@@ -93,7 +95,19 @@ Rsec 5 0 10
     EXPECT_EQ(da.n2, db.n2);
     EXPECT_DOUBLE_EQ(da.value, db.value);
     EXPECT_DOUBLE_EQ(da.ic, db.ic);
+    if (da.name == "H1") hIdx = static_cast<int>(i);
   }
+  // Hysteretic core params survive the round trip bit-for-bit.
+  ASSERT_GE(hIdx, 0);
+  const auto& ha = a.circuit.devices()[static_cast<std::size_t>(hIdx)];
+  const auto& hb = b.circuit.devices()[static_cast<std::size_t>(hIdx)];
+  EXPECT_DOUBLE_EQ(ha.hTurns, hb.hTurns);
+  EXPECT_DOUBLE_EQ(ha.hAe, hb.hAe);
+  EXPECT_DOUBLE_EQ(ha.hLe, hb.hLe);
+  EXPECT_DOUBLE_EQ(ha.hVe, hb.hVe);
+  EXPECT_DOUBLE_EQ(ha.hBs, hb.hBs);
+  EXPECT_DOUBLE_EQ(ha.hA, hb.hA);
+  EXPECT_DOUBLE_EQ(ha.hHc, hb.hHc);
   ASSERT_EQ(a.pwms.size(), 1u);
   EXPECT_EQ(a.pwms[0].switchName, "S1");
   EXPECT_DOUBLE_EQ(a.pwms[0].freq, 20e3);

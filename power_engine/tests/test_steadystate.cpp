@@ -305,3 +305,18 @@ TEST(SteadyState, DeepSaturationBacktracks) {
   EXPECT_TRUE(std::isfinite(r.residual));
   EXPECT_EQ(eng.time(), 0.0);
 }
+
+// Hysteretic memory has no shooting slot: must throw, never silently
+// converge the wrong orbit (transformers stay skippable: stateless).
+TEST(SteadyState, HystereticInductorRejected) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 5.0);
+  eng.circuit().addHystereticInductor("H1", 1, 0, 10.0, 1e-4, 0.1, 1e-5, 1.5, 100.0,
+                                      50.0, 0.0);
+  eng.circuit().addCapacitor("C1", 1, 0, 100e-6);
+  eng.start();
+  ShootingConfig cfg;
+  cfg.period = 1e-3;
+  EXPECT_THROW(solvePeriodicSteadyState(eng, 0.0, cfg), std::runtime_error);
+}

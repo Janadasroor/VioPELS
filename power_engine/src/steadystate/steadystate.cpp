@@ -108,6 +108,13 @@ ShootingResult solvePeriodicSteadyState(Engine& eng, double t0, const ShootingCo
         case DeviceType::SatInductor:
           slots.push_back({i, 3});
           break;
+        case DeviceType::HystereticInductor:
+          // Stateful (hS/hB memory) with no slot kind: silently skipping
+          // would converge the wrong orbit. Reject like statespace does
+          // for unsupported devices (transformers stay skippable: stateless).
+          throw std::runtime_error("shooting needs L/C states: hysteretic inductor '" +
+                                   d.name + "' has unmapped memory state");
+          break;
         case DeviceType::Capacitor:
           slots.push_back({i, 4});
           break;
