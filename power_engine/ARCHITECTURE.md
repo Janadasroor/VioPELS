@@ -217,9 +217,10 @@
   L = N^2/(Rcore+Rgap) with first-order fringing, then verified on a
   saturable-core + gap series network (L(i) sweep, Bpeak, roll-off) with
   minor-loop hysteresis + eddy loss. Geometry is an input (vendor core
-  database explicitly future); copper/window/thermal stay caller-side
-  (N + MLT reported; thermal module couples core loss onward). Model
-  limit, documented at the field: ripples below the Hc clamps report
+  database explicitly future); window fill (N*Aw/Awindow <= max) and DC
+  copper (MLT*N*rho/Aw at Irms) are enforced/reported, loss budget covers
+  total; thermal coupling stays caller-side (feed total loss onward).
+  Model limit, documented at the field: ripples below the Hc clamps report
   exactly 0 hysteresis loss (eddy carries switching loss).
 - Sweep harness (`sweep.h`, `src/sweep/`): parameter grid × netlist runs
   (loadNetlist + setParameter re-elaboration per point), setup callback

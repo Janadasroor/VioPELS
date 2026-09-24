@@ -287,7 +287,7 @@ double ReluctanceNetwork::equivalentInductance(const std::string& name) {
 }
 
 InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry& core,
-                                    const CoreMaterial& mat) {
+                                    const CoreMaterial& mat, const WindingSpec& winding) {
   reqPosFin(spec.inductance, "inductor spec needs inductance > 0");
   reqPosFin(spec.iPeak, "inductor spec needs iPeak > 0");
   if (!(spec.iRms >= 0.0) || !std::isfinite(spec.iRms))
@@ -308,6 +308,7 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   reqPosFin(core.le, "core geometry needs le > 0");
   reqPosFin(core.ve, "core geometry needs ve > 0");
   reqPosFin(core.mlt, "core geometry needs mlt > 0");
+  reqPosFin(core.windowArea, "core geometry needs windowArea > 0");
   reqPosFin(mat.bh.bs, "core material needs Bs > 0");
   reqPosFin(mat.bh.a, "core material needs shape field a > 0");
   if (!(mat.bh.hc >= 0.0) || !std::isfinite(mat.bh.hc))
@@ -315,6 +316,10 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   reqPosFin(mat.rho, "core material needs rho > 0");
   if (!(mat.lamThickness >= 0.0) || !std::isfinite(mat.lamThickness))
     throw std::runtime_error("core material needs lamThickness finite >= 0");
+  reqPosFin(winding.wireAreaM2, "winding spec needs wireAreaM2 > 0");
+  reqPosFin(winding.resistivity, "winding spec needs resistivity > 0");
+  if (!(winding.maxFill > 0.0) || !(winding.maxFill < 1.0) || !std::isfinite(winding.maxFill))
+    throw std::runtime_error("winding spec needs maxFill in (0, 1)");
 
   // Turns from the Bsat bound at worst-case current (peak + ripple/2).
   const double iMax = spec.iPeak + 0.5 * spec.iRipplePkPk;
@@ -388,9 +393,19 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   const double hystW = perCycle * spec.freqHz * core.ve;
   const double eddyW =
       eddyLossDensity(mat.rho, mat.lamThickness, spec.freqHz, bAcPk) * core.ve;
-  if (spec.lossBudgetW > 0.0 && hystW + eddyW > spec.lossBudgetW)
-    throw std::runtime_error("inductor spec infeasible: core loss over budget");
-  return InductorDesign{static_cast<int>(n), lg, bPeak, l0, lPk, rolloff, hystW, eddyW};
+  // Window fill + DC copper (MLT*N*rho/Aw at Irms); budget covers total.
+  const double fill =
+      static_cast<double>(n) * winding.wireAreaM2 / core.windowArea;
+  if (!(fill <= winding.maxFill))
+    throw std::runtime_error("inductor spec infeasible: window fill over limit");
+  const double copperW =
+      core.mlt * static_cast<double>(n) * winding.resistivity / winding.wireAreaM2 *
+      spec.iRms * spec.iRms;
+  if (spec.lossBudgetW > 0.0 && hystW + eddyW + copperW > spec.lossBudgetW)
+    throw std::runtime_error("inductor spec infeasible: total loss over budget");
+  return InductorDesign{static_cast<int>(n), lg,        bPeak,  l0,
+                        lPk,               rolloff,    hystW,  eddyW,
+                        copperW,           fill};
 }
 
 }  // namespace magnetics

@@ -438,9 +438,10 @@ TEST(InductorDesign, BuckInductorClosesLoop) {
   spec.iRms = 0.4;
   spec.iRipplePkPk = 0.3;
   spec.freqHz = 20e3;
-  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
   CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};  // ferrite: no laminations
-  const InductorDesign d = designGappedInductor(spec, core, mat);
+  WindingSpec wound{1e-6};  // 1mm2 Cu per turn
+  const InductorDesign d = designGappedInductor(spec, core, mat, wound);
   // Closed-form targets land exactly; network verification agrees.
   EXPECT_EQ(d.turns, 5);
   EXPECT_NEAR(d.gapM, 11e-6, 2e-6);
@@ -449,8 +450,11 @@ TEST(InductorDesign, BuckInductorClosesLoop) {
   EXPECT_LT(d.rolloff, 0.1);
   EXPECT_GE(d.hysteresisLossW, 0.0);
   EXPECT_DOUBLE_EQ(d.eddyLossW, 0.0);  // unlaminated ferrite
+  // Window: 5 x 1mm2 in 20mm2 = 0.25 fill; copper 0.04*5*17.2n/1u at 0.4A.
+  EXPECT_NEAR(d.windowFill, 0.25, 1e-12);
+  EXPECT_NEAR(d.copperLossW, 0.04 * 5 * 17.2e-9 / 1e-6 * 0.16, 1e-12);
   // Deterministic: same inputs, bit-identical design.
-  const InductorDesign d2 = designGappedInductor(spec, core, mat);
+  const InductorDesign d2 = designGappedInductor(spec, core, mat, wound);
   EXPECT_EQ(d2.turns, d.turns);
   EXPECT_DOUBLE_EQ(d2.gapM, d.gapM);
   EXPECT_DOUBLE_EQ(d2.lAtZero, d.lAtZero);
@@ -464,26 +468,33 @@ TEST(InductorDesign, RejectsBadInputs) {
   spec.iRms = 0.4;
   spec.iRipplePkPk = 0.3;
   spec.freqHz = 20e3;
-  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
   CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  WindingSpec wound{1e-6};
   InductorSpec bad = spec;
   bad.inductance = 0.0;
-  EXPECT_THROW(designGappedInductor(bad, core, mat), std::runtime_error);
+  EXPECT_THROW(designGappedInductor(bad, core, mat, wound), std::runtime_error);
   CoreGeometry badCore = core;
   badCore.ae = -1e-4;
-  EXPECT_THROW(designGappedInductor(spec, badCore, mat), std::runtime_error);
+  EXPECT_THROW(designGappedInductor(spec, badCore, mat, wound), std::runtime_error);
   CoreMaterial badMat = mat;
   badMat.bh.bs = 0.0;
-  EXPECT_THROW(designGappedInductor(spec, core, badMat), std::runtime_error);
+  EXPECT_THROW(designGappedInductor(spec, core, badMat, wound), std::runtime_error);
   // Infeasible: 100mH on this core wants a 36mm gap (limit 2.5mm).
   InductorSpec huge = spec;
   huge.inductance = 100e-3;
-  EXPECT_THROW(designGappedInductor(huge, core, mat), std::runtime_error);
+  EXPECT_THROW(designGappedInductor(huge, core, mat, wound), std::runtime_error);
   // Infeasible: loss budget below the steel-core minor-loop loss.
   InductorSpec budgeted = spec;
   budgeted.lossBudgetW = 1e-12;
   CoreMaterial steel{{1.8, 200.0, 50.0}, 5e-7, 0.3e-3};
-  EXPECT_THROW(designGappedInductor(budgeted, core, steel), std::runtime_error);
+  EXPECT_THROW(designGappedInductor(budgeted, core, steel, wound), std::runtime_error);
+  // Infeasible: window fill over limit (fat wire).
+  WindingSpec fat{10e-6};
+  EXPECT_THROW(designGappedInductor(spec, core, mat, fat), std::runtime_error);
+  // Bad winding: zero wire area.
+  WindingSpec bare{0.0};
+  EXPECT_THROW(designGappedInductor(spec, core, mat, bare), std::runtime_error);
 }
 
 // Steel-laminated variant pins both loss paths (ferrite above is ~lossless).
@@ -495,9 +506,10 @@ TEST(InductorDesign, SteelCoreLossPaths) {
   spec.iRms = 0.4;
   spec.iRipplePkPk = 0.3;
   spec.freqHz = 20e3;
-  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04};
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
   CoreMaterial steel{{1.8, 200.0, 50.0}, 5e-7, 0.3e-3};
-  const InductorDesign d = designGappedInductor(spec, core, steel);
+  WindingSpec wound{1e-6};
+  const InductorDesign d = designGappedInductor(spec, core, steel, wound);
   // Ripple below the Hc clamps: hysteresis model resolves 0 by
   // construction (documented); eddy carries the switching loss.
   EXPECT_DOUBLE_EQ(d.hysteresisLossW, 0.0);

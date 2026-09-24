@@ -85,6 +85,17 @@ struct CoreGeometry {
   double le = 0.0;   ///< effective path length [m], > 0
   double ve = 0.0;   ///< effective volume [m^3], > 0
   double mlt = 0.0;  ///< mean length per turn [m], > 0 (for copper calcs)
+  double windowArea = 0.0;  ///< winding window [m^2], > 0 (fill check)
+};
+
+/// Winding (copper) spec. DC copper only: proximity/Dowell AC needs layer
+/// and window-breadth detail beyond Ae/le (documented future with a
+/// layer model); at switching ripple the DC + core terms dominate the
+/// budget check honestly.
+struct WindingSpec {
+  double wireAreaM2 = 0.0;  ///< copper per turn [m^2], > 0
+  double resistivity = 17.2e-9;  ///< winding resistivity [Ohm m], > 0
+  double maxFill = 0.4;  ///< window fill limit N*Aw/Aw_window, in (0, 1)
 };
 
 /// Core material: B-H (tanh) + resistivity/lamination for eddy loss.
@@ -105,7 +116,7 @@ struct InductorSpec {
   double bMaxMargin = 0.75;  ///< Bpeak budget as fraction of Bs, in (0, 1)
   double maxGapFraction = 0.05;  ///< gap/le limit, in (0, 0.5)
   double maxRolloff = 0.1;  ///< L(Ipeak)/L(0) drop limit, in (0, 1)
-  double lossBudgetW = 0.0;  ///< core loss budget [W], 0 = unenforced
+  double lossBudgetW = 0.0;  ///< total (core + copper) loss budget [W], 0 = off
 };
 
 /// Synthesized gapped inductor (all fields verified, not just computed).
@@ -123,6 +134,8 @@ struct InductorDesign {
   /// carries the switching-frequency loss (standard two-term practice).
   double hysteresisLossW = 0.0;
   double eddyLossW = 0.0;        ///< eddy loss at ripple [W]
+  double copperLossW = 0.0;      ///< DC copper loss at Irms [W]
+  double windowFill = 0.0;       ///< N*wireArea/windowArea (<= maxFill)
 };
 
 /// Synthesize + verify a gapped inductor. Procedure (standard gapped-core
@@ -130,12 +143,14 @@ struct InductorDesign {
 /// bound); raise N until the core reluctance fits inside N^2/L (gap >= 0);
 /// solve gap from L = N^2/(Rcore + Rgap) with first-order fringing
 /// F = 1 + lg/sqrt(Ae); then verify L(i) on a saturable-core + gap series
-/// network, Bpeak, roll-off, minor-loop hysteresis loss (ripple triangle
+/// network, Bpeak, roll-off, window fill (N*Aw/Awindow), DC copper loss
+/// (MLT*N*rho/Aw at Irms), minor-loop hysteresis loss (ripple triangle
 /// through HysteresisCore) and eddy loss. Throws on bad inputs or
-/// infeasible specs (gap over limit, B over Bs, roll-off over limit, loss
-/// over budget).
+/// infeasible specs (gap over limit, B over Bs, roll-off over limit, fill
+/// over limit, loss over budget). Thermal coupling stays caller-side
+/// (feed copperLossW + core loss into the thermal module).
 InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry& core,
-                                    const CoreMaterial& mat);
+                                    const CoreMaterial& mat, const WindingSpec& winding);
 
 // ---------------------------------------------------------------------------
 // Reluctance-network magnetic domain + winding (circuit) interface.
