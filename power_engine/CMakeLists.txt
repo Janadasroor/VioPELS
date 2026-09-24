@@ -142,6 +142,8 @@ if(NOT Eigen3_FOUND)
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()
 
+add_subdirectory(tools)
+
 if(POWER_ENGINE_BUILD_EXAMPLES)
   add_subdirectory(examples)
   add_subdirectory(bench)

@@ -250,6 +250,15 @@
   startup transient (edge-counted switching is transient-free; compare
   conduction by shape/monotonicity or POP-init); light-load buck runs
   DCM (Vout rises — use measured Vout in analytics, never ideal D*Vin).
+- Command line (`tools/pe/`: `pe` binary, subcommand registry): `run`
+  loads a netlist, applies .param/.tran overrides, expands .control pwm /
+  .thermal / .etable, runs to stop, writes time,<probes> CSV (stdout or
+  --out), --probe filter, --method trap|trbdf2|auto; exit 0/1/2 (usage
+  errors and unreadable inputs are 2, matching scripts). New commands =
+  one cmd_<name>.cpp + one explicit registration call (static-init
+  self-registration is silently dropped from static archives by the
+  linker). Tested in-process (return codes + CSV, no spawned processes);
+  installed with the library.
 - Induction (`machine.h` induction section): dq synchronous-frame flux
   model (RK4) + exact steady-torque equivalent circuit as reference.
   Rotating machines use dq ODEs (position-varying mutuals have no MNA

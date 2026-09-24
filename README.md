@@ -25,7 +25,7 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 203 tests,
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 212 tests,
   24 binaries, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
@@ -43,6 +43,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/power_engine/examples/netlist_buck_demo | head
 ```
+
+Command line (`pe`, subcommand registry — `pe <command> --help`):
+```sh
+cmake --build build --target pe
+./build/power_engine/tools/pe run --netlist buck.net --out sim.csv
+./build/power_engine/tools/pe run --netlist buck.net --probe v:3 \
+  --tstop 0.002 --method trbdf2 --param RLOAD=10
+```
+`pe run` loads a netlist, expands `.control pwm` / `.thermal` / `.etable`
+specs, runs to `.tran tstop` (overridable), and writes `time,<probes>`
+CSV to stdout or `--out`. Exit codes: 0 ok, 1 sim error, 2 usage/input
+error. New features plug in as subcommands (one file + one registration;
+in-process test seam, no spawned processes in tests).
 
 Build types: default is **Release** — unoptimized Eigen is ~17x slower
 (measured on the 6ms buck sim: 0.65s → 0.037s), so always benchmark and
