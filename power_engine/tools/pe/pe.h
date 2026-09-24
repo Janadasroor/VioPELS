@@ -49,4 +49,9 @@ struct Command {
 void registerCommand(Command cmd);
 const std::map<std::string, Command>& commands();
 
+// Top-level dispatch (pe_main is a thin wrapper mapping the return to the
+// process exit code). Testable seam: covers --help/--version, unknown
+// commands, per-command --help, malformed args, and exception mapping.
+int dispatch(const std::vector<std::string>& args, std::ostream& out, std::ostream& err);
+
 }  // namespace pe

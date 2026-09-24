@@ -7,6 +7,7 @@ add_library(pe_cli STATIC
 )
 target_include_directories(pe_cli PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(pe_cli PUBLIC power_engine power_engine_warnings)
+target_compile_definitions(pe_cli PUBLIC PE_VERSION="${VioPELS_VERSION}")
 
 if(POWER_ENGINE_BUILD_EXAMPLES)
   add_executable(pe pe/pe_main.cpp)
