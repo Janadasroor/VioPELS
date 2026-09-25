@@ -34,6 +34,14 @@ class Circuit {
   void addDiode(const std::string& name, int anode, int cathode,
                 double vf = 0.0, double ron = 10e-3, double roff = 1e6,
                 double qrr = 0.0, double trr = 0.0);
+  /// Switch with anti-parallel diode (half-bridge atom): gate-controlled
+  /// switch n1->n2 (ron when closed) + diode anode n2 / cathode n1 when
+  /// open (vf, qrr/trr recovery). Starts open and blocking.
+  void addSwitchDiode(const std::string& name, int n1, int n2,
+                      double ron = 5e-3, double roff = 1e6, double vf = 0.0,
+                      bool closed = false, double eon = 0.0, double eoff = 0.0,
+                      double qrr = 0.0, double trr = 0.0, double ttail = 0.0,
+                      double tailk = 0.1, double tsw = 0.0);
   /// Ideal transformer: primary (np1,nm1), secondary (np2,nm2),
   /// Vp/Vs = ratio, ratio*Ip + Is = 0. Algebraic (no magnetics).
   void addTransformer(const std::string& name, int np1, int nm1, int np2, int nm2,

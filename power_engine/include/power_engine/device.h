@@ -14,6 +14,14 @@ enum class DeviceType {
   CurrentSource,
   Switch,  ///< Ideal switch stamped as Ron/Roff, gate-controlled.
   Diode,   ///< Ideal diode: Ron+Vf when on, Roff when off, auto-commutated.
+  SwitchDiode,  ///< Half-bridge atom: gate-controlled switch (n1->n2 Ron
+  ///< when closed) with anti-parallel diode (anode n2, cathode n1) when
+  ///< open. Closed: Ron (+ tail/tsw machinery like Switch). Open:
+  ///< auto-commutated diode like Diode, incl. Qrr recovery (recovery
+  ///< current flows n1->n2, i.e. positive in branch reference). Gate
+  ///< edges book Eon/Eoff like Switch; diode conduction is exact v*i.
+  ///< tsw shapes turn-on into a blocking (non-conducting) state only:
+  ///< closing onto a conducting diode commutates ideally (instant).
   Transformer,  ///< Ideal transformer, algebraic: Vp = ratio*Vs, ratio*Ip + Is = 0.
   CenterTapTransformer,  ///< Ideal 3-winding center-tap (push-pull):
   ///< (n1,n2) = half A (end, center-tap), (n2,n3) = half B (tap, end),
@@ -110,6 +118,9 @@ struct Device {
   double recT = 0.0;  // remaining recovery/tail time [s]
   double recI = 0.0;  // recovery amplitude [A, branch reference direction]
   double recE = 0.0;  // pending release energy [J], consumed by Engine losses
+  bool recTail = false;  // SwitchDiode only: recT/recI is a switch tail
+                         // (exponential) rather than diode recovery
+                         // (triangular). z-only, never salted.
   bool closedPrev = false;  // gate state at previous step (edge detection)
   // Slew-limited switching transition (PAT-style behavioral edge, 0 = ideal
   // instant). On a gate toggle the resistance sweeps geometrically from its

@@ -208,10 +208,12 @@ void Engine::resetAccumulators() {
   losses_.clear();
   lastGate_.clear();
   for (const auto& d : circuit_.devices()) {
-    if (d.type == DeviceType::Switch || d.type == DeviceType::Diode) {
+    if (d.type == DeviceType::Switch || d.type == DeviceType::Diode ||
+        d.type == DeviceType::SwitchDiode) {
       losses_[d.name] = thermal::DeviceLoss{};
     }
-    if (d.type == DeviceType::Switch) lastGate_[d.name] = d.closed;
+    if (d.type == DeviceType::Switch || d.type == DeviceType::SwitchDiode)
+      lastGate_[d.name] = d.closed;
   }
   for (auto& [name, net] : thermals_) {
     (void)name;
@@ -358,7 +360,7 @@ void Engine::updateLosses(double dtSub) {
   // Pre-edge (v,i) come from the preStepVi_ snapshot taken before the solve.
   std::map<std::string, double> edgeEnergy;
   for (const auto& d : circuit_.devices()) {
-    if (d.type != DeviceType::Switch) continue;
+    if (d.type != DeviceType::Switch && d.type != DeviceType::SwitchDiode) continue;
     auto it = lastGate_.find(d.name);
     const bool before = (it == lastGate_.end()) ? d.closed : it->second;
     if (d.closed != before) {
@@ -406,8 +408,9 @@ void Engine::updateLosses(double dtSub) {
 
 void Engine::attachLossModel(const std::string& device, loss::DeviceLossModel model) {
   const Device& d = circuit_.findDevice(device);  // throws if unknown
-  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) {
-    throw std::runtime_error("attachLossModel needs a switch or diode: " + device);
+  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode &&
+      d.type != DeviceType::SwitchDiode) {
+    throw std::runtime_error("attachLossModel needs a switch, diode, or combo: " + device);
   }
   if (d.type == DeviceType::Diode && model.hasSwitching()) {
     throw std::runtime_error("attachLossModel: diodes use recovery (QRR), not EON/EOFF tables");
@@ -441,7 +444,9 @@ void Engine::applyLossModels() {
     throw std::runtime_error("applyLossModels needs a loaded netlist with .etable");
   }
   for (const auto& d : circuit_.devices()) {
-    if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) continue;
+    if (d.type != DeviceType::Switch && d.type != DeviceType::Diode &&
+        d.type != DeviceType::SwitchDiode)
+      continue;
     if (d.eonTable.empty() && d.eoffTable.empty() && d.ronTable.empty() &&
         d.vfTable.empty()) {
       continue;
@@ -468,8 +473,9 @@ void Engine::applyLossModels() {
 
 void Engine::attachThermal(const std::string& device, thermal::ThermalNetwork net) {
   const Device& d = circuit_.findDevice(device);  // throws if unknown
-  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) {
-    throw std::runtime_error("attachThermal needs a switch or diode: " + device);
+  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode &&
+      d.type != DeviceType::SwitchDiode) {
+    throw std::runtime_error("attachThermal needs a switch, diode, or combo: " + device);
   }
   thermals_.insert_or_assign(device, std::move(net));
 }
@@ -500,8 +506,9 @@ double Engine::junctionTemp(const std::string& device) const {
 
 thermal::DeviceLoss Engine::deviceLoss(const std::string& device) const {
   const Device& d = circuit_.findDevice(device);
-  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) {
-    throw std::runtime_error("deviceLoss needs a switch or diode: " + device);
+  if (d.type != DeviceType::Switch && d.type != DeviceType::Diode &&
+      d.type != DeviceType::SwitchDiode) {
+    throw std::runtime_error("deviceLoss needs a switch, diode, or combo: " + device);
   }
   auto it = losses_.find(device);
   if (it == losses_.end()) return {};

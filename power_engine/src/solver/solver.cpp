@@ -115,7 +115,7 @@ void TransientSolver::rebuildMaps() {
       rowD_[i] = r4;
     }
     if (d.type == DeviceType::SatInductor) hasNonlinear_ = true;
-    if (d.type == DeviceType::Diode) hasDiodes_ = true;
+    if (d.type == DeviceType::Diode || d.type == DeviceType::SwitchDiode) hasDiodes_ = true;
   }
   const auto n = static_cast<Eigen::Index>(nodeList_.size() + k);
   x_ = Eigen::VectorXd::Zero(n);
@@ -159,6 +159,10 @@ void TransientSolver::initialize() {
       d.conducting = false;
       d.v_prev = 0.0;
       d.i_prev = 0.0;
+    } else if (d.type == DeviceType::SwitchDiode) {
+      d.conducting = false;
+      d.v_prev = 0.0;
+      d.i_prev = 0.0;
     } else if (d.type == DeviceType::Transformer) {
       d.v_prev = 0.0;
       d.i_prev = 0.0;
@@ -193,7 +197,7 @@ void TransientSolver::initialize() {
     d.recT = 0.0;
     d.recI = 0.0;
     d.recE = 0.0;
-    if (d.type == DeviceType::Switch) {
+    if (d.type == DeviceType::Switch || d.type == DeviceType::SwitchDiode) {
       d.closedPrev = d.closed;
       d.transT = 0.0;
       d.transFrom = 0.0;
@@ -240,6 +244,9 @@ static inline double recoveryCurrent(const Device& d) {
   if (d.type == DeviceType::Diode) {
     return d.trr > 0.0 ? d.recI * (d.recT / d.trr) : 0.0;
   }
+  if (d.type == DeviceType::SwitchDiode && !d.recTail) {
+    return d.trr > 0.0 ? d.recI * (d.recT / d.trr) : 0.0;
+  }
   if (d.ttail <= 0.0) return 0.0;
   const double elapsed = 5.0 * d.ttail - d.recT;
   return d.recI * std::exp(-elapsed / d.ttail);
@@ -256,10 +263,20 @@ void TransientSolver::assemble(bool withMatrix) const {
   // Starting at commit would let all the violence happen first and defeat
   // the ramp. Skipped when already started (diode-iteration re-assembles).
   for (auto& d : circuit_.mutableDevices()) {
-    if (d.type != DeviceType::Switch || d.tsw <= 0.0) continue;
+    if ((d.type != DeviceType::Switch && d.type != DeviceType::SwitchDiode) || d.tsw <= 0.0)
+      continue;
     const bool rose = !d.closedPrev && d.closed;
     const bool fell = d.closedPrev && !d.closed;
     if (!(rose || fell)) continue;
+    if (rose && d.type == DeviceType::SwitchDiode && d.conducting) {
+      // Commutation off a conducting body diode is ideal (instant): the
+      // channel takes the current, the diode snaps off. A ramp starting
+      // at Roff would orphan the freewheel current for the first step
+      // (closed stamp carries no diode path) and spike the node.
+      d.conducting = false;
+      d.transT = 0.0;
+      continue;
+    }
     const double target = d.closed ? d.ron : d.roff;
     if (d.transT > 0.0 && d.transTo == target) continue;
     d.transFrom = (d.transT > 0.0) ? switchResistance(d) : (d.closedPrev ? d.ron : d.roff);
@@ -337,6 +354,27 @@ void TransientSolver::assemble(bool withMatrix) const {
           const double g = 1.0 / d.ron;
           if (withMatrix) stampG(A, r1, r2, g);
           stampI(z, r1, r2, -g * d.vf);
+        } else {
+          if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
+        }
+        break;
+      }
+      case DeviceType::SwitchDiode: {
+        // Closed: plain switch (Ron/ramp + tail source like Switch).
+        // Open: anti-parallel diode, anode n2 / cathode n1 (reference
+        // direction n1->n2, so signs flip vs Diode): forward current
+        // n2->n1 reads negative in branch reference.
+        if (d.closed) {
+          // Gate on: plain switch (re-closing cancels any tail, so no
+          // recovery source here by construction).
+          if (withMatrix) stampG(A, r1, r2, 1.0 / switchResistance(d));
+        } else if (d.recT > 0.0) {
+          stampI(z, r1, r2, recoveryCurrent(d));
+        } else if (d.conducting) {
+          // Norton of the anti-parallel diode: I(n1->n2) = (vNew+Vf)/Ron.
+          const double g = 1.0 / d.ron;
+          if (withMatrix) stampG(A, r1, r2, g);
+          stampI(z, r1, r2, g * d.vf);
         } else {
           if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
         }
@@ -594,6 +632,18 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
         hashWord(h, dblBits(d.ron));
         hashWord(h, dblBits(d.roff));
         break;
+      case DeviceType::SwitchDiode:
+        // Union of Switch + Diode salts (recTail is z-only: both shapes
+        // impress current, matrix identical).
+        hashWord(h, d.closed ? 1ULL : 0ULL);
+        hashWord(h, d.conducting ? 1ULL : 0ULL);
+        hashWord(h, dblBits(d.ron));
+        hashWord(h, dblBits(d.roff));
+        hashWord(h, dblBits(d.transT));
+        hashWord(h, dblBits(d.transFrom));
+        hashWord(h, dblBits(d.transTo));
+        hashWord(h, d.recT > 0.0 ? 1ULL : 0ULL);
+        break;
       case DeviceType::Transformer:
         hashWord(h, dblBits(d.ratio));
         break;
@@ -643,17 +693,25 @@ bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
   auto& devs = circuit_.mutableDevices();
   for (std::size_t i = 0; i < devs.size(); ++i) {
     auto& d = devs[i];
-    if (d.type != DeviceType::Diode) continue;
+    const bool isCombo = (d.type == DeviceType::SwitchDiode);
+    if (d.type != DeviceType::Diode && !isCombo) continue;
+    if (isCombo && d.closed) continue;  // gate on: switch, not diode
     if (d.recT > 0.0) continue;  // recovery in progress; timer runs in histories
-    const double vd = vRow(rowA_[i]) - vRow(rowB_[i]);
+    // Diode: vd = V(anode) - V(cathode) = V(n1) - V(n2). Combo diode is
+    // anti-parallel: anode n2, cathode n1, so vd flips sign.
+    const double vd = isCombo ? (vRow(rowB_[i]) - vRow(rowA_[i]))
+                              : (vRow(rowA_[i]) - vRow(rowB_[i]));
     if (d.conducting) {
       // I(anode->cathode) = (Vd - Vf)/Ron; turn off when negative.
       const double id = (vd - d.vf) / d.ron;
       if (id < -kDiodeIhys) {
-        if (d.qrr > 0.0 && d.i_prev > 1e-12) {
+        if (d.qrr > 0.0 && d.i_prev * (isCombo ? -1.0 : 1.0) > 1e-12) {
           // Forward turn-off: triangular recovery (Irr = 2*Qrr/trr).
-          d.recI = -2.0 * d.qrr / d.trr;
+          // Combo recovery flows n1->n2 (reverse of its diode forward),
+          // i.e. positive in branch reference: recI flips sign.
+          d.recI = (isCombo ? 2.0 : -2.0) * d.qrr / d.trr;
           d.recT = d.trr;
+          d.recTail = false;
           changed = true;  // re-solve with the recovery stamp
           ++stats_.diodeEvents;
         } else {
@@ -778,6 +836,73 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
           vT = vNew;
           iT = (d.recT > 0.0) ? recoveryCurrent(d)
                               : (d.conducting ? (vNew - d.vf) / d.ron : vNew / d.roff);
+        }
+        break;
+      }
+      case DeviceType::SwitchDiode: {
+        // Closed: exact Switch bookkeeping (trans countdown, tail start,
+        // tail cancel on re-close). Open: Diode bookkeeping with the
+        // anti-parallel polarity (anode n2): branch current (n1->n2) is
+        // the NEGATIVE of the diode forward current.
+        if (d.closed) {
+          const double rNow = switchResistance(d);
+          const double iNew = vNew / rNow;
+          if (!mid) {
+            const double iBefore = d.i_prev;
+            const bool fell = d.closedPrev && !d.closed;
+            if (d.transT > 0.0) {
+              d.transT -= dt_;
+              if (d.transT <= 0.0) {
+                d.transT = 0.0;
+                if (!d.closed && d.ttail > 0.0 && d.tailk > 0.0 && iBefore != 0.0) {
+                  d.recT = 5.0 * d.ttail;
+                  d.recI = d.tailk * iBefore;
+                  d.recTail = true;
+                }
+              }
+            }
+            if (d.closed) {
+              d.recT = 0.0;  // re-closing cancels any tail
+              d.recI = 0.0;
+              d.recTail = false;
+            } else if (d.recT > 0.0) {
+              d.recT -= dt_;
+              if (d.recT <= 0.0) {
+                d.recT = 0.0;
+                d.recI = 0.0;
+                d.recTail = false;
+              }
+            } else if (fell && d.tsw == 0.0 && d.ttail > 0.0 && d.tailk > 0.0 &&
+                       iBefore != 0.0) {
+              d.recT = 5.0 * d.ttail;
+              d.recI = d.tailk * iBefore;
+              d.recTail = true;
+            }
+            d.closedPrev = d.closed;
+          }
+          vT = vNew;
+          iT = iNew;
+        } else {
+          // Turn-off is ideal (tsw shapes turn-on only): cancel any
+          // pending turn-off ramp so re-close timing stays exact.
+          if (!mid && d.transT > 0.0) d.transT = 0.0;
+          if (!mid && d.recT > 0.0) {
+            d.v_prev = vNew;
+            d.i_prev = recoveryCurrent(d);
+            d.recT -= dt_;
+            if (d.recT <= 0.0) {
+              d.recT = 0.0;
+              d.recI = 0.0;
+              d.recTail = false;
+              d.conducting = false;
+              d.recE += d.qrr * std::abs(vNew);
+            }
+          } else if (!mid || d.recT <= 0.0) {
+            vT = vNew;
+            iT = (d.recT > 0.0) ? recoveryCurrent(d)
+                                : (d.conducting ? (vNew + d.vf) / d.ron : vNew / d.roff);
+          }
+          if (!mid) d.closedPrev = d.closed;
         }
         break;
       }

@@ -4,7 +4,8 @@
   `engine.h`, `types.h`, `netlist.h`, `control.h`, `thermal.h`).
 - `src/core/circuit.cpp`: device container, node enumeration, validation.
   `addSwitch` (Ron/Roff + `closed` gate + Eon/Eoff), `addDiode`
-  (anode/cathode, Vf, Ron/Roff, `conducting`), `addTransformer`
+  (anode/cathode, Vf, Ron/Roff, `conducting`), `addSwitchDiode`
+  (gate switch n1->n2 + anti-parallel diode anode n2; `P` device), `addTransformer`
   (primary/secondary + ratio), `setSwitch` lookup. `numExtraUnknowns()`
   counts MNA branch rows (1 per V-source, 2 per transformer, 3 per
   center-tap).
@@ -23,6 +24,12 @@
     the ramp state (transT/From/To); snapshot/restore carries it.
     Diode conducting: Norton
     `G=1/Ron || Isrc=G*Vf` (so `Vd=Vf+I*Ron`); blocking: `Roff`.
+    SwitchDiode: closed stamps as Switch (Ron/ramp/tail), open as the
+    anti-parallel Diode with flipped reference signs (forward n2->n1
+    reads negative); commutation scan covers it when open; closing onto
+    a conducting diode commutates ideally (no ramp — a ramp from Roff
+    would orphan the freewheel current); `recTail` separates tail from
+    recovery shape (z-only).
     Factorization caching (14b): the MNA matrix depends only on the
     topology signature (switch/diode states incl. diode-recovery-active,
     R/L/C/k values, dt) — histories, source values and recovery currents

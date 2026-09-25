@@ -692,3 +692,147 @@ Rload 5 0 10
   ASSERT_GT(n5, 0);
   EXPECT_NEAR(sum5 / n5, 23.2, 0.5);  // regulation unchanged
 }
+
+// SwitchDiode combo (item 22a): synchronous buck on two P devices.
+// Proves gate switching + anti-parallel freewheel in one part.
+TEST(Converters, SyncBuckComboRegulates) {
+  Engine eng;
+  eng.loadNetlist(R"(
+V1 1 0 12
+P1 1 2 RON=5m ROFF=1Meg VF=0.7
+P2 2 0 RON=5m ROFF=1Meg VF=0.7
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=P1 freq=20k duty=0.5 complement=P2 deadtime=500n
+.tran 0.5u 3m
+.end
+)");
+  eng.applyPwmSpecs();
+  eng.clearStopTime();
+  std::vector<std::pair<double, double>> vout, vsw;
+  eng.setCallback([&](const power_engine::Solution& sol) {
+    vout.emplace_back(sol.t, sol.probes.at("v:3"));
+    vsw.emplace_back(sol.t, sol.probes.at("v:2"));
+  });
+  eng.start();
+  eng.runUntil(3e-3);
+  double sum = 0;
+  int n = 0;
+  double swMin = 1e9, swMax = -1e9;
+  for (const auto& [t, v] : vout)
+    if (t > 2e-3) {
+      sum += v;
+      ++n;
+    }
+  for (const auto& [t, v] : vsw)
+    if (t > 2e-3) {
+      swMin = std::min(swMin, v);
+      swMax = std::max(swMax, v);
+    }
+  ASSERT_GT(n, 0);
+  // 6.0 minus deadtime + complement-overlap droop: the complement turns
+  // lo off td AFTER main rises (engine expansion), so each cycle pays
+  // 500ns of Ron-divider overlap. Discrete S+D pairs measure exactly
+  // the same 5.6254 (see ComboMatchesDiscretePair) — the level is the
+  // drive's, not the device's.
+  EXPECT_NEAR(sum / n, 5.6254, 0.01);
+  EXPECT_LT(swMin, -0.3);   // body diode clamps the node below ground
+  EXPECT_GT(swMin, -1.0);   // ... at Vf, not railing
+  EXPECT_GT(swMax, 11.0);   // high side still reaches the rail
+}
+
+// Combo == discrete S+D pairs trajectory-wise (same math, one part).
+// Sync buck on both sides so every combo meets its exact discrete pair
+// (high-side clamp-only pairs float; the sync version is well-behaved).
+TEST(Converters, ComboMatchesDiscretePair) {
+  Engine a, b;
+  a.loadNetlist(R"(
+.model SW mosfet_ideal RON=5m ROFF=1Meg
+.model DD diode_ideal VF=0.7 RON=5m
+V1 1 0 12
+S1 1 2 MODEL=SW
+D1 2 1 MODEL=DD
+S2 2 0 MODEL=SW
+D2 0 2 MODEL=DD
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=S1 freq=20k duty=0.5 complement=S2 deadtime=500n
+.tran 0.5u 3m
+.end
+)");
+  b.loadNetlist(R"(
+V1 1 0 12
+P1 1 2 RON=5m ROFF=1Meg VF=0.7
+P2 2 0 RON=5m ROFF=1Meg VF=0.7
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=P1 freq=20k duty=0.5 complement=P2 deadtime=500n
+.tran 0.5u 3m
+.end
+)");
+  std::vector<double> va2, va3, vb2, vb3;
+  a.applyPwmSpecs();
+  a.clearStopTime();
+  a.setCallback([&](const power_engine::Solution& sol) {
+    va2.push_back(sol.probes.at("v:2"));
+    va3.push_back(sol.probes.at("v:3"));
+  });
+  a.start();
+  a.runUntil(3e-3);
+  b.applyPwmSpecs();
+  b.clearStopTime();
+  b.setCallback([&](const power_engine::Solution& sol) {
+    vb2.push_back(sol.probes.at("v:2"));
+    vb3.push_back(sol.probes.at("v:3"));
+  });
+  b.start();
+  b.runUntil(3e-3);
+  ASSERT_EQ(va3.size(), vb3.size());
+  double worst = 0;
+  for (std::size_t i = 0; i < va3.size(); ++i) {
+    worst = std::max(worst, std::abs(va3[i] - vb3[i]));
+    worst = std::max(worst, std::abs(va2[i] - vb2[i]));
+  }
+  EXPECT_LT(worst, 1e-6);  // measured 7e-8 (matrix-order rounding only)
+}
+
+// Combo behavioral extras (Qrr recovery + tail + turn-on ramp) execute
+// and stay regulated: low-side freewheel recovery fires every cycle.
+TEST(Converters, ComboRecoveryTailRamp) {
+  Engine eng;
+  eng.loadNetlist(R"(
+V1 1 0 12
+P1 1 2 RON=5m ROFF=1Meg VF=0.7
+P2 2 0 RON=5m ROFF=1Meg VF=0.7 QRR=100n TRR=200n TTAIL=100n TSW=100n
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=P1 freq=20k duty=0.5 complement=P2 deadtime=500n
+.tran 0.5u 3m
+.end
+)");
+  eng.applyPwmSpecs();
+  eng.clearStopTime();
+  std::vector<double> vout;
+  eng.setCallback([&](const power_engine::Solution& sol) {
+    vout.push_back(sol.probes.at("v:3"));
+  });
+  eng.start();
+  eng.runUntil(3e-3);
+  EXPECT_GT(eng.solverStats().diodeEvents, 50);  // recovery fired cyclically
+  double sum = 0;
+  int n = 0;
+  for (std::size_t i = 0; i < vout.size(); ++i) {
+    // callback order == time order; last third ≈ steady state
+    if (i * 3 > vout.size() * 2) {
+      sum += vout[i];
+      ++n;
+    }
+  }
+  ASSERT_GT(n, 0);
+  EXPECT_GT(sum / n, 5.0);
+  EXPECT_LT(sum / n, 6.0);
+}

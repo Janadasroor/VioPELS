@@ -141,6 +141,49 @@ void Circuit::addDiode(const std::string& name, int anode, int cathode, double v
   devices_.push_back(d);
 }
 
+void Circuit::addSwitchDiode(const std::string& name, int n1, int n2, double ron, double roff,
+                             double vf, bool closed, double eon, double eoff, double qrr,
+                             double trr, double ttail, double tailk, double tsw) {
+  checkNodes(n1, n2);
+  checkPositive(ron, "Ron");
+  checkPositive(roff, "Roff");
+  if (!(roff > ron)) throw std::runtime_error("Roff must exceed Ron");
+  if (!std::isfinite(vf) || vf < 0.0) throw std::runtime_error("Vf must be finite non-negative");
+  if (!(eon >= 0.0) || !std::isfinite(eon)) throw std::runtime_error("Eon must be finite >= 0");
+  if (!(eoff >= 0.0) || !std::isfinite(eoff)) {
+    throw std::runtime_error("Eoff must be finite >= 0");
+  }
+  if (!(qrr >= 0.0) || !std::isfinite(qrr)) throw std::runtime_error("Qrr must be finite >= 0");
+  if (!(trr >= 0.0) || !std::isfinite(trr)) throw std::runtime_error("Trr must be finite >= 0");
+  if (qrr > 0.0 && !(trr > 0.0)) throw std::runtime_error("Qrr needs Trr > 0");
+  if (!(ttail >= 0.0) || !std::isfinite(ttail)) {
+    throw std::runtime_error("Ttail must be finite >= 0");
+  }
+  if (!(tailk >= 0.0) || !std::isfinite(tailk)) {
+    throw std::runtime_error("Tailk must be finite >= 0");
+  }
+  if (!(tsw >= 0.0) || !std::isfinite(tsw)) {
+    throw std::runtime_error("Tsw must be finite >= 0");
+  }
+  checkNameUnique(devices_, name);
+  noteTopologyChange();
+  Device d = makeDevice(DeviceType::SwitchDiode, name, n1, n2, 0.0);
+  d.ron = ron;
+  d.roff = roff;
+  d.vf = vf;
+  d.closed = closed;
+  d.closedPrev = closed;
+  d.eon = eon;
+  d.eoff = eoff;
+  d.qrr = qrr;
+  d.trr = trr;
+  d.ttail = ttail;
+  d.tailk = tailk;
+  d.tsw = tsw;
+  d.conducting = false;  // diode half starts blocking
+  devices_.push_back(d);
+}
+
 void Circuit::addTransformer(const std::string& name, int np1, int nm1, int np2, int nm2,
                              double ratio) {
   checkNodes(np1, nm1);
@@ -270,13 +313,15 @@ std::size_t Circuit::deviceIndex(const std::string& name) const {
 
 void Circuit::setSwitch(const std::string& name, bool closed) {
   Device& d = findDevice(name);
-  if (d.type != DeviceType::Switch) throw std::runtime_error("setSwitch on non-switch: " + name);
+  if (d.type != DeviceType::Switch && d.type != DeviceType::SwitchDiode)
+    throw std::runtime_error("setSwitch on non-switch: " + name);
   d.closed = closed;
 }
 
 bool Circuit::switchClosed(const std::string& name) const {
   const Device& d = findDevice(name);
-  if (d.type != DeviceType::Switch) throw std::runtime_error("switchClosed on non-switch: " + name);
+  if (d.type != DeviceType::Switch && d.type != DeviceType::SwitchDiode)
+    throw std::runtime_error("switchClosed on non-switch: " + name);
   return d.closed;
 }
 

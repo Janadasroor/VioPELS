@@ -60,11 +60,24 @@ Rload 5 0 {R}
 .end
 """
 
+SYNCBUCK = """\
+V1 1 0 12
+P1 1 2 RON=5m ROFF=1Meg VF=0.7
+P2 2 0 RON=5m ROFF=1Meg VF=0.7
+L1 2 3 200u
+C1 3 0 200u
+Rload 3 0 5
+.control pwm switch=P1 freq=20k duty=0.5 complement=P2 deadtime=500n
+.tran 0.5u 3m
+.end
+"""
+
 TEMPLATES = {
     "buck (PWM)": BUCK,
     "boost (PWM)": BOOST,
     "RC step": RC,
     "push-pull converter": PUSHPULL,
+    "sync buck (combo)": SYNCBUCK,
 }
 
 

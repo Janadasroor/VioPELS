@@ -540,6 +540,66 @@ struct Elaborator {
         lastSwitchOrDiode = name;
         break;
       }
+      case 'P': {
+        // Switch with anti-parallel diode (half-bridge atom):
+        // Pname n1 n2 [params]. Switch forward n1->n2; diode anode n2,
+        // cathode n1. Inline params only (no MODEL in v1).
+        if (pos.size() != 2) fail(line, "switch-diode needs: Pname n1 n2 [..]");
+        double ron = 5e-3, roff = 1e6, vf = 0.0, eon = 0.0, eoff = 0.0;
+        double qrr = 0.0, trr = 0.0, ttail = 0.0, tailk = 0.1, tsw = 0.0;
+        bool closed = false;
+        std::string eonTab, eoffTab, ronTab, vfTab;  // .etable refs (UPPER)
+        {
+          auto dv = [&](const char* k, std::string dflt) {
+            auto it2 = kv.find(k);
+            return it2 == kv.end() ? dflt : upper(it2->second);
+          };
+          eonTab = dv("EON_TABLE", std::string{});
+          eoffTab = dv("EOFF_TABLE", std::string{});
+          ronTab = dv("RON_TABLE", std::string{});
+          vfTab = dv("VF_TABLE", std::string{});
+        }
+        ron = kvNum(kv, "RON", ron, line);
+        roff = kvNum(kv, "ROFF", roff, line);
+        vf = kvNum(kv, "VF", vf, line);
+        if (!std::isfinite(vf) || vf < 0.0) fail(line, "VF must be finite >= 0");
+        eon = kvNum(kv, "EON", eon, line);
+        eoff = kvNum(kv, "EOFF", eoff, line);
+        if (!(eon >= 0.0) || !std::isfinite(eon)) fail(line, "EON must be finite >= 0");
+        if (!(eoff >= 0.0) || !std::isfinite(eoff)) fail(line, "EOFF must be finite >= 0");
+        qrr = kvNum(kv, "QRR", qrr, line);
+        trr = kvNum(kv, "TRR", trr, line);
+        if (!(qrr >= 0.0) || !std::isfinite(qrr)) fail(line, "QRR must be finite >= 0");
+        if (!(trr >= 0.0) || !std::isfinite(trr)) fail(line, "TRR must be finite >= 0");
+        if (qrr > 0.0 && !(trr > 0.0)) fail(line, "QRR needs TRR > 0");
+        ttail = kvNum(kv, "TTAIL", ttail, line);
+        tailk = kvNum(kv, "TAILK", tailk, line);
+        if (!(ttail >= 0.0) || !std::isfinite(ttail)) fail(line, "TTAIL must be finite >= 0");
+        if (!(tailk >= 0.0) || !std::isfinite(tailk)) fail(line, "TAILK must be finite >= 0");
+        tsw = kvNum(kv, "TSW", tsw, line);
+        if (!(tsw >= 0.0) || !std::isfinite(tsw)) fail(line, "TSW must be finite >= 0");
+        auto iit = kv.find("INIT");
+        if (iit != kv.end()) {
+          if (ieq(iit->second, "ON") || ieq(iit->second, "CLOSED") || iit->second == "1") {
+            closed = true;
+          } else if (ieq(iit->second, "OFF") || ieq(iit->second, "OPEN") ||
+                     iit->second == "0") {
+            closed = false;
+          } else {
+            fail(line, "INIT must be ON or OFF");
+          }
+        }
+        if (kv.find("MODEL") != kv.end()) fail(line, "switch-diode takes inline params (no MODEL in v1)");
+        c.addSwitchDiode(name, nodeId(pos[0], line), nodeId(pos[1], line), ron, roff, vf,
+                         closed, eon, eoff, qrr, trr, ttail, tailk, tsw);
+        Device& dp = c.findDevice(name);
+        dp.eonTable = eonTab;
+        dp.eoffTable = eoffTab;
+        dp.ronTable = ronTab;
+        dp.vfTable = vfTab;
+        lastSwitchOrDiode = name;
+        break;
+      }
       case 'T': {
         if (pos.size() != 4 && pos.size() != 5 && pos.size() != 6) {
           fail(line, "transformer needs: Tname n1 n2 n3 n4 [RATIO=n] or "
@@ -979,7 +1039,8 @@ NetlistResult Parser::parse(const std::string& text,
   // 4. Cross-checks: pwm/thermal reference existing switches/diodes.
   auto isSwitch = [&](const std::string& n) {
     try {
-      return out.circuit.findDevice(n).type == DeviceType::Switch;
+      const auto t = out.circuit.findDevice(n).type;
+      return t == DeviceType::Switch || t == DeviceType::SwitchDiode;
     } catch (...) {
       return false;
     }
@@ -1000,7 +1061,8 @@ NetlistResult Parser::parse(const std::string& text,
   for (const auto& t : out.thermals) {
     try {
       const auto& d = out.circuit.findDevice(t.device);
-      if (d.type != DeviceType::Switch && d.type != DeviceType::Diode) {
+      if (d.type != DeviceType::Switch && d.type != DeviceType::Diode &&
+          d.type != DeviceType::SwitchDiode) {
         throw std::runtime_error("netlist: .thermal device '" + t.device +
                                  "' is not a switch/diode");
       }
@@ -1078,6 +1140,16 @@ std::string NetlistResult::serialize() const {
         os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " VF=" << d.vf << " RON=" << d.ron
            << " ROFF=" << d.roff;
         if (d.qrr > 0.0) os << " QRR=" << d.qrr << " TRR=" << d.trr;
+        if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
+        if (!d.vfTable.empty()) os << " VF_TABLE=" << d.vfTable;
+        os << "\n";
+        break;
+      case DeviceType::SwitchDiode:
+        os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " RON=" << d.ron
+           << " ROFF=" << d.roff << " VF=" << d.vf;
+        if (d.qrr > 0.0) os << " QRR=" << d.qrr << " TRR=" << d.trr;
+        if (!d.eonTable.empty()) os << " EON_TABLE=" << d.eonTable;
+        if (!d.eoffTable.empty()) os << " EOFF_TABLE=" << d.eoffTable;
         if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
         if (!d.vfTable.empty()) os << " VF_TABLE=" << d.vfTable;
         os << "\n";
