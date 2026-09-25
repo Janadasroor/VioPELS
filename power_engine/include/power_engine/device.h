@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 
 namespace power_engine {
@@ -103,10 +104,14 @@ struct Device {
   double ron = 5e-3;     // on-resistance [Ohm]
   double roff = 1e6;     // off-resistance [Ohm]
   double vf = 0.0;       // diode forward drop [Volt]
+  double vbr = std::numeric_limits<double>::infinity();  // Zener reverse
+  ///< breakdown [V]; inf = ideal blocking. Slope rbr below.
+  double rbr = 0.0;      // Zener breakdown slope [Ohm]; 0 = follow ron
   double eon = 0.0;      // switch turn-on energy per edge [J]
   double eoff = 0.0;     // switch turn-off energy per edge [J]
   bool closed = false;      // switch gate state (true = on/Ron)
   bool conducting = false;  // diode state (true = on/Ron+Vf)
+  bool breakdown = false;   // Zener reverse-breakdown state (solver-managed)
   // Reverse-recovery (diode) / tail-current (switch) model:
   // triangular recovery Qrr/trr, exponential tail ttail/tailk.
   // Fixed-shape approximations (no di/dt dependence), documented.

@@ -24,6 +24,10 @@
     the ramp state (transT/From/To); snapshot/restore carries it.
     Diode conducting: Norton
     `G=1/Ron || Isrc=G*Vf` (so `Vd=Vf+I*Ron`); blocking: `Roff`.
+    Zener (`VBR=`/`RBR=`, inf/0 = ideal): third state `breakdown`
+    stamped `(vd+Vbr)/Rbr`, entered past `-(Vbr+hys)`, snapped back
+    when reverse current dies (no recovery — majority carrier); salt
+    covers the flag; history mirrors the Norton.
     SwitchDiode: closed stamps as Switch (Ron/ramp/tail), open as the
     anti-parallel Diode with flipped reference signs (forward n2->n1
     reads negative); commutation scan covers it when open; closing onto

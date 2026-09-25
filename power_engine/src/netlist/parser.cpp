@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -522,6 +523,11 @@ struct Elaborator {
         roff = kvNum(kv, "ROFF", roff, line);
         qrr = kvNum(kv, "QRR", qrr, line);
         trr = kvNum(kv, "TRR", trr, line);
+        double vbr = kvNum(kv, "VBR", std::numeric_limits<double>::infinity(), line);
+        double rbr = kvNum(kv, "RBR", 0.0, line);
+        if (!(vbr > 0.0) && vbr != std::numeric_limits<double>::infinity())
+          fail(line, "VBR must be positive or absent (ideal)");
+        if (!(rbr >= 0.0) || !std::isfinite(rbr)) fail(line, "RBR must be finite >= 0");
         {
           auto dv = [&](const char* k, std::string dflt) {
             auto it2 = kv.find(k);
@@ -533,7 +539,8 @@ struct Elaborator {
             fail(line, "diodes use recovery (QRR), not EON/EOFF tables");
           }
         }
-        c.addDiode(name, nodeId(pos[0], line), nodeId(pos[1], line), vf, ron, roff, qrr, trr);
+        c.addDiode(name, nodeId(pos[0], line), nodeId(pos[1], line), vf, ron, roff, qrr, trr,
+                   vbr, rbr);
         Device& dd = c.findDevice(name);
         dd.ronTable = ronTab;
         dd.vfTable = vfTab;
@@ -1140,6 +1147,8 @@ std::string NetlistResult::serialize() const {
         os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " VF=" << d.vf << " RON=" << d.ron
            << " ROFF=" << d.roff;
         if (d.qrr > 0.0) os << " QRR=" << d.qrr << " TRR=" << d.trr;
+        if (d.vbr != std::numeric_limits<double>::infinity())
+          os << " VBR=" << d.vbr << " RBR=" << d.rbr;
         if (!d.ronTable.empty()) os << " RON_TABLE=" << d.ronTable;
         if (!d.vfTable.empty()) os << " VF_TABLE=" << d.vfTable;
         os << "\n";

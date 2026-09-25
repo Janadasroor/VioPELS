@@ -240,3 +240,91 @@ TEST(DiodeCapHits, ZeroOnCleanFixtures) {
     EXPECT_GT(eng.currentSolution().probes.at("v:3"), 0.0);
   }
 }
+
+TEST(Zener, ClampsReverseAtVbr) {
+  // Shunt regulator: 12V via 1k, zener cathode at the rail.
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 12.0);
+  eng.circuit().addResistor("R1", 1, 2, 1000.0);
+  eng.circuit().addDiode("D1", 0, 2, 0.7, 10e-3, 1e6, 0.0, 0.0, 5.1, 10.0);
+  eng.setStopTime(200e-6);
+  eng.start();
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  // 5.1 + I*Rbr = 5.1 + 6.9mA*10 = 5.169V; forward flag stays clear.
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 5.169, 0.02);
+  EXPECT_FALSE(eng.circuit().diodeConducting("D1"));
+  EXPECT_GT(eng.solverStats().diodeEvents, 0);
+}
+
+TEST(Zener, ForwardStillDiode) {
+  // Vbr set, forward bias: plain Vf drop, conducting flag set.
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 2.0);
+  eng.circuit().addResistor("R1", 1, 2, 100.0);
+  eng.circuit().addDiode("D1", 2, 0, 0.7, 10e-3, 1e6, 0.0, 0.0, 5.1, 10.0);
+  eng.setStopTime(100e-6);
+  eng.start();
+  while (eng.status() == power_engine::SimulationStatus::Running) eng.step();
+  EXPECT_TRUE(eng.circuit().diodeConducting("D1"));
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 0.7, 0.02);
+}
+
+TEST(Zener, EntersAndExitsBreakdown) {
+  // One run: S1 open -> source feeds the rail, zener clamps at ~5.16V;
+  // S1 closes at 1ms (crowbars node 1 through Rs) -> rail collapses,
+  // breakdown snaps back to blocking. (Rs is essential: an ideal source
+  // cannot be crowbarred.)
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("V1", 9, 0, 12.0);
+  eng.circuit().addResistor("Rs", 9, 1, 100.0);
+  eng.circuit().addResistor("R1", 1, 2, 1000.0);
+  eng.circuit().addDiode("D1", 0, 2, 0.7, 10e-3, 1e6, 0.0, 0.0, 5.1, 10.0);
+  eng.circuit().addSwitch("S1", 1, 0, 5e-3, 1e6, false);
+  eng.scheduleSwitch("S1", true, 1e-3);
+  std::vector<std::pair<double, double>> trace;
+  eng.setCallback([&](const power_engine::Solution& sol) {
+    trace.emplace_back(sol.t, sol.probes.at("v:2"));
+  });
+  eng.clearStopTime();
+  eng.start();
+  eng.runUntil(2e-3);
+  double early = 0, late = 0;
+  int ne = 0, nl = 0;
+  for (const auto& [t, v] : trace) {
+    if (t > 0.5e-3 && t < 0.9e-3) {
+      early += v;
+      ++ne;
+    }
+    if (t > 1.5e-3) {
+      late += v;
+      ++nl;
+    }
+  }
+  ASSERT_GT(ne, 0);
+  ASSERT_GT(nl, 0);
+  EXPECT_NEAR(early / ne, 5.162, 0.03);  // in breakdown (Rs drop incl.)
+  EXPECT_LT(std::abs(late / nl), 0.05);  // released to blocking
+  EXPECT_FALSE(eng.circuit().diodeConducting("D1"));
+}
+
+TEST(Zener, NetlistKeysRoundTrip) {
+  // VBR=/RBR= parse through a netlist and clamp end-to-end.
+  Engine eng;
+  eng.loadNetlist(R"(
+V1 1 0 12
+R1 1 2 1k
+D1 0 2 VF=0.7 RON=10m ROFF=1Meg VBR=5.1 RBR=10
+.tran 1u 200u
+.end
+)");
+  eng.clearStopTime();
+  eng.start();
+  eng.runUntil(200e-6);
+  EXPECT_NEAR(eng.currentSolution().probes.at("v:2"), 5.169, 0.02);
+  const power_engine::Device& d = eng.circuit().findDevice("D1");
+  EXPECT_DOUBLE_EQ(d.vbr, 5.1);
+  EXPECT_DOUBLE_EQ(d.rbr, 10.0);
+}

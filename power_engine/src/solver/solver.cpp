@@ -157,6 +157,7 @@ void TransientSolver::initialize() {
       d.v_prev = 0.0;
     } else if (d.type == DeviceType::Diode) {
       d.conducting = false;
+      d.breakdown = false;
       d.v_prev = 0.0;
       d.i_prev = 0.0;
     } else if (d.type == DeviceType::SwitchDiode) {
@@ -236,6 +237,9 @@ static inline double switchResistance(const Device& d) {
   if (d.tsw > 0.0 && d.transT > 0.0) return d.transTo;  // degenerate: snap
   return d.closed ? d.ron : d.roff;
 }
+
+// Zener breakdown slope: explicit Rbr, or Ron when rbr == 0.
+static inline double zenerRbr(const Device& d) { return d.rbr > 0.0 ? d.rbr : d.ron; }
 
 // Recovery/tail branch current in reference direction (n1->n2) at the
 // current recovery timer value. Diode: triangular Irr*(recT/trr) with
@@ -354,6 +358,11 @@ void TransientSolver::assemble(bool withMatrix) const {
           const double g = 1.0 / d.ron;
           if (withMatrix) stampG(A, r1, r2, g);
           stampI(z, r1, r2, -g * d.vf);
+        } else if (d.breakdown) {
+          // Zener reverse breakdown: I(anode->cathode) = (vd+Vbr)/Rbr.
+          const double g = 1.0 / zenerRbr(d);
+          if (withMatrix) stampG(A, r1, r2, g);
+          stampI(z, r1, r2, g * d.vbr);
         } else {
           if (withMatrix) stampG(A, r1, r2, 1.0 / d.roff);
         }
@@ -628,6 +637,7 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
         // Recovery (recT>0) replaces the Norton shunt with an impressed
         // source: matrix-affecting. recT's exact value is z-only.
         hashWord(h, d.conducting ? 1ULL : 0ULL);
+        hashWord(h, d.breakdown ? 1ULL : 0ULL);
         hashWord(h, d.recT > 0.0 ? 1ULL : 0ULL);
         hashWord(h, dblBits(d.ron));
         hashWord(h, dblBits(d.roff));
@@ -720,9 +730,26 @@ bool TransientSolver::updateDiodeStates(const Eigen::VectorXd& x) {
           ++stats_.diodeEvents;
         }
       }
+    } else if (d.breakdown) {
+      // Zener reverse: I(anode->cathode) = (Vd + Vbr)/Rbr, negative in
+      // breakdown. Snaps back to blocking when the reverse current dies
+      // (no recovery: majority-carrier breakdown stores no charge). A
+      // forward swing exits here and enters forward on the next pass.
+      // Combo devices never reach this branch (no Vbr in v1 by design).
+      const double ir = (vd + d.vbr) / zenerRbr(d);
+      if (ir > -kDiodeIhys) {
+        d.breakdown = false;
+        changed = true;
+        ++stats_.diodeEvents;
+      }
     } else {
       if (vd > d.vf + kDiodeVhys) {
         d.conducting = true;
+        changed = true;
+        ++stats_.diodeEvents;
+      } else if (!isCombo && vd < -(d.vbr + kDiodeVhys)) {
+        // Vbr = +inf keeps this branch dead (ideal diode, unchanged).
+        d.breakdown = true;
         changed = true;
         ++stats_.diodeEvents;
       }
@@ -834,8 +861,15 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
           // Mid-capture during recovery: freeze the impressed state into
           // the midpoint (timers untouched); step state handled above.
           vT = vNew;
-          iT = (d.recT > 0.0) ? recoveryCurrent(d)
-                              : (d.conducting ? (vNew - d.vf) / d.ron : vNew / d.roff);
+          if (d.recT > 0.0) {
+            iT = recoveryCurrent(d);
+          } else if (d.conducting) {
+            iT = (vNew - d.vf) / d.ron;
+          } else if (d.breakdown) {
+            iT = (vNew + d.vbr) / zenerRbr(d);
+          } else {
+            iT = vNew / d.roff;
+          }
         }
         break;
       }

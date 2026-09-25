@@ -120,7 +120,7 @@ void Circuit::addSwitch(const std::string& name, int n1, int n2, double ron, dou
 }
 
 void Circuit::addDiode(const std::string& name, int anode, int cathode, double vf, double ron,
-                       double roff, double qrr, double trr) {
+                       double roff, double qrr, double trr, double vbr, double rbr) {
   checkNodes(anode, cathode);
   if (!std::isfinite(vf) || vf < 0.0) throw std::runtime_error("Vf must be finite non-negative");
   checkPositive(ron, "diode Ron");
@@ -129,6 +129,10 @@ void Circuit::addDiode(const std::string& name, int anode, int cathode, double v
   if (!(qrr >= 0.0) || !std::isfinite(qrr)) throw std::runtime_error("Qrr must be finite >= 0");
   if (!(trr >= 0.0) || !std::isfinite(trr)) throw std::runtime_error("Trr must be finite >= 0");
   if (qrr > 0.0 && !(trr > 0.0)) throw std::runtime_error("Qrr needs Trr > 0");
+  if (!(vbr > 0.0) && vbr != std::numeric_limits<double>::infinity())
+    throw std::runtime_error("Vbr must be positive finite or +inf");
+  if (!(rbr >= 0.0) || !std::isfinite(rbr)) throw std::runtime_error("Rbr must be finite >= 0");
+  if (rbr > 0.0 && !(rbr < roff)) throw std::runtime_error("Rbr must be below Roff");
   checkNameUnique(devices_, name);
   noteTopologyChange();
   Device d = makeDevice(DeviceType::Diode, name, anode, cathode, 0.0);
@@ -137,7 +141,10 @@ void Circuit::addDiode(const std::string& name, int anode, int cathode, double v
   d.roff = roff;
   d.qrr = qrr;
   d.trr = trr;
+  d.vbr = vbr;
+  d.rbr = rbr;
   d.conducting = false;  // start blocking
+  d.breakdown = false;
   devices_.push_back(d);
 }
 

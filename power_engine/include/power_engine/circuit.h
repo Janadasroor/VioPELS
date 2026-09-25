@@ -31,9 +31,14 @@ class Circuit {
                  double tsw = 0.0);
   /// Ideal diode, n1=anode, n2=cathode. Starts blocking.
   /// qrr/trr: triangular reverse recovery (Irr = 2*Qrr/trr); 0 = ideal.
+  /// vbr/rbr: Zener reverse breakdown [V]/slope [Ohm] (inf/0 = ideal
+  /// blocking; rbr 0 follows ron). Breakdown snaps off cleanly (no
+  /// stored charge — majority-carrier physics).
   void addDiode(const std::string& name, int anode, int cathode,
                 double vf = 0.0, double ron = 10e-3, double roff = 1e6,
-                double qrr = 0.0, double trr = 0.0);
+                double qrr = 0.0, double trr = 0.0,
+                double vbr = std::numeric_limits<double>::infinity(),
+                double rbr = 0.0);
   /// Switch with anti-parallel diode (half-bridge atom): gate-controlled
   /// switch n1->n2 (ron when closed) + diode anode n2 / cathode n1 when
   /// open (vf, qrr/trr recovery). Starts open and blocking.

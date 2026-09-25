@@ -72,12 +72,21 @@ Rload 3 0 5
 .end
 """
 
+ZENER = """\
+V1 1 0 12
+R1 1 2 1k
+D1 0 2 VF=0.7 RON=10m ROFF=1Meg VBR=5.1 RBR=10
+.tran 1u 1m
+.end
+"""
+
 TEMPLATES = {
     "buck (PWM)": BUCK,
     "boost (PWM)": BOOST,
     "RC step": RC,
     "push-pull converter": PUSHPULL,
     "sync buck (combo)": SYNCBUCK,
+    "zener clamp": ZENER,
 }
 
 
