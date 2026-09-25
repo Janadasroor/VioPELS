@@ -74,6 +74,7 @@ set(POWER_ENGINE_SOURCES
   src/sweep/sweep.cpp
   src/magnetics/magnetics.cpp
   src/sensing/sensing.cpp
+  src/fmi/fmi_import.cpp
 )
 
 add_library(power_engine STATIC ${POWER_ENGINE_SOURCES})
@@ -87,6 +88,12 @@ foreach(tgt power_engine power_engine_shared)
   target_include_directories(${tgt} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
+  # Vendored FMI headers are TU-private to src/fmi (never installed).
+  target_include_directories(${tgt} PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/fmi/include>)
+  # dlopen for FMI import: static-archive consumers (tests) need the
+  # symbol too, but installs must not inherit it — build-tree-only PUBLIC.
+  target_link_libraries(${tgt} PUBLIC $<BUILD_INTERFACE:${CMAKE_DL_LIBS}>)
   # Warnings are build-tree-only: PRIVATE deps of static archives would
   # otherwise propagate -Werror to consumers via the export set.
   target_link_libraries(${tgt} PRIVATE $<BUILD_INTERFACE:power_engine_warnings>)

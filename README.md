@@ -33,8 +33,9 @@ Headless C++20 system-level power-electronics engine.
 - Magnetics & EMI: hysteresis core + eddy loss, reluctance networks,
   conducted-EMI screening (DC LISN + CISPR 32 Class B)
 - Interop: installable CMake package (`find_package` smoke-tested),
-  FMI 2.0 co-simulation export (XSD-validated), ngspice
-  cross-validation harness (agreement 5e-4..1.5e-3)
+  FMI 2.0 co-simulation export (XSD-validated) + FMI 2.0 CS import
+  (`fmi_import.h`: external controller FMUs drive gates via `CoSim`),
+  ngspice cross-validation harness (agreement 5e-4..1.5e-3)
 
 ## Build
 ```sh
@@ -143,5 +144,6 @@ Rload 3 0 5
 See `power_engine/` for `include/`, `src/` (one dir per domain),
 `tests/`, `examples/`, plus `bench/` (benchmark harness + baselines),
 `xval/` (ngspice cross-validation), `fuzz/` (libFuzzer target + corpus),
-`fmi/` (FMI 2.0 export: wrapper, packager, schemas), `coverage/`
+`fmi/` (FMI 2.0 export: wrapper, packager, schemas; import lives in
+`include/power_engine/fmi_import.h` + `src/fmi/`), `coverage/`
 (gcov script). Details in `power_engine/ARCHITECTURE.md`.
