@@ -64,6 +64,18 @@ in-process test seam, no spawned processes in tests).
   --axis RLOAD=4,5,6 --measure 'last(v:3)' --jobs 0
 ```
 
+Plotting (`power_engine/plots/`, matplotlib recipes over `pe` CSVs):
+```sh
+./build/power_engine/tools/pe run --netlist buck.net --out run.csv
+python3 power_engine/plots/plot_run.py run.csv            # stacked traces
+python3 power_engine/plots/plot_compare.py --probe v:3 a.csv b.csv  # overlay
+python3 power_engine/plots/plot_spectrum.py run.csv --probe v:3     # dBFS FFT
+./build/power_engine/tools/pe sweep --netlist buck.net --axis R=1,2,5,10 \
+  --measure 'mean(v:3) as vout' --out sweep.csv
+python3 power_engine/plots/plot_sweep.py sweep.csv --x R --y vout
+bash power_engine/plots/selfcheck.sh  # headless end-to-end check (also in CI)
+```
+
 Build types: default is **Release** — unoptimized Eigen is ~17x slower
 (measured on the 6ms buck sim: 0.65s → 0.037s), so always benchmark and
 ship Release. Sanitizers (as in CI):
@@ -72,9 +84,9 @@ cmake -B build-san -DCMAKE_BUILD_TYPE=Debug -DPOWER_ENGINE_SANITIZE=address,unde
 cmake --build build-san && ctest --test-dir build-san --output-on-failure
 ```
 
-CI (`.github/workflows/ci.yml`, 11 jobs): Release matrix over
+CI (`.github/workflows/ci.yml`, 12 jobs): Release matrix over
 Ubuntu/Windows/macOS × gcc/clang/MSVC plus ASan+UBSan, Ninja,
-install-smoke, ngspice cross-validation, fuzz corpus, and FMI
+install-smoke, ngspice cross-validation, plots workflow, fuzz corpus, and FMI
 pack+check jobs — all green.
 
 ## Cross-validation vs ngspice + benchmark
