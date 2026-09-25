@@ -76,6 +76,17 @@ python3 power_engine/plots/plot_sweep.py sweep.csv --x R --y vout
 bash power_engine/plots/selfcheck.sh  # headless end-to-end check (also in CI)
 ```
 
+Wave viewer + netlist editor (`power_engine/waveviewer/`, stdlib only):
+```sh
+python3 power_engine/waveviewer/wview.py run.csv        # viewer (+overlay)
+python3 power_engine/waveviewer/wview.py --netlist buck.net  # editor
+python3 power_engine/waveviewer/selfcheck.py  # headless logic (also in CI)
+```
+Tkinter ships with Python — no pip packages. Waves tab: probe toggles,
+second-run overlay, drag/wheel zoom, cursor readout. Netlist tab:
+template starters (each CI-proven to simulate clean), pre-flight hints,
+Run via `pe`, one-click Plot.
+
 Build types: default is **Release** — unoptimized Eigen is ~17x slower
 (measured on the 6ms buck sim: 0.65s → 0.037s), so always benchmark and
 ship Release. Sanitizers (as in CI):

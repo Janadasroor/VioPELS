@@ -117,6 +117,8 @@ jobs:
           cmake --build build -j4 --target pe
       - name: Plots self-check (pe -> CSVs -> PNGs)
         run: bash power_engine/plots/selfcheck.sh
+      - name: Waveviewer self-check (stdlib logic + template sims)
+        run: python3 power_engine/waveviewer/selfcheck.py
 
   fuzz-corpus:
     name: ubuntu-clang / fuzz corpus (ASan)
