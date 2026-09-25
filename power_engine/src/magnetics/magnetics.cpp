@@ -94,6 +94,13 @@ double eddyLossDensity(double rho, double thickness, double freqHz, double bPeak
   return kPi * kPi / (6.0 * rho) * thickness * thickness * freqHz * freqHz * bPeak * bPeak;
 }
 
+double windingResistivityAtTemp(const WindingSpec& w, double tempC) {
+  if (!std::isfinite(tempC)) throw std::runtime_error("winding temp must be finite [degC]");
+  if (!(w.tempAlpha >= 0.0) || !std::isfinite(w.tempAlpha))
+    throw std::runtime_error("winding spec needs tempAlpha finite >= 0");
+  return w.resistivity * (1.0 + w.tempAlpha * (tempC - 20.0));
+}
+
 // ---------------- ReluctanceNetwork ----------------
 
 int ReluctanceNetwork::nodeIndex(int node) const {
@@ -334,10 +341,26 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   if (!(winding.maxFill > 0.0) || !(winding.maxFill < 1.0) || !std::isfinite(winding.maxFill))
     throw std::runtime_error("winding spec needs maxFill in (0, 1)");
   if (winding.layers < 1) throw std::runtime_error("winding spec needs layers >= 1");
+  if (!std::isfinite(spec.tempC)) throw std::runtime_error("inductor spec needs tempC finite");
+  if (!std::isfinite(mat.bsTempCoeff))
+    throw std::runtime_error("core material needs bsTempCoeff finite");
+  if (!std::isfinite(mat.rhoTempCoeff))
+    throw std::runtime_error("core material needs rhoTempCoeff finite");
+
+  // Hot operating point: copper rho(T), saturation bound Bs(T), core rho(T).
+  // mu_i (Bs/a slope) deliberately stays at the 20C value — the saturation
+  // bound is what temperature threatens. Throws if T pushes Bs/rho out.
+  const double rhoCu = windingResistivityAtTemp(winding, spec.tempC);
+  const double bsHot = mat.bh.bs * (1.0 + mat.bsTempCoeff * (spec.tempC - 20.0));
+  if (!(bsHot > 0.0) || !std::isfinite(bsHot))
+    throw std::runtime_error("inductor hot Bs non-positive: temp/coeff out of range");
+  const double rhoCoreHot = mat.rho * (1.0 + mat.rhoTempCoeff * (spec.tempC - 20.0));
+  if (!(rhoCoreHot > 0.0) || !std::isfinite(rhoCoreHot))
+    throw std::runtime_error("inductor hot core rho non-positive: temp/coeff out of range");
 
   // Turns from the Bsat bound at worst-case current (peak + ripple/2).
   const double iMax = spec.iPeak + 0.5 * spec.iRipplePkPk;
-  const double bMax = spec.bMaxMargin * mat.bh.bs;
+  const double bMax = spec.bMaxMargin * bsHot;
   long long n = static_cast<long long>(
       std::ceil(spec.inductance * iMax / (bMax * core.ae)));
   if (n < 1) n = 1;
@@ -366,7 +389,7 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
 
   // Verify on a saturable-core + gap series network (the module's own model).
   ReluctanceNetwork net;
-  net.addSaturableReluctance("core", 0, 1, core.le, core.ae, mat.bh.bs, mat.bh.a);
+  net.addSaturableReluctance("core", 0, 1, core.le, core.ae, bsHot, mat.bh.a);
   net.addReluctance("gap", 1, 0, rGap > 0.0 ? rGap : 1e-12);
   net.addWinding("W", "core", static_cast<double>(n));
   auto lambdaAt = [&](double i) {
@@ -379,7 +402,7 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   const double bDc = net.branchFlux("core") / core.ae;
   const double bAcPk = (0.5 * spec.iRipplePkPk) * l0 / (static_cast<double>(n) * core.ae);
   const double bPeak = bDc + bAcPk;
-  if (!(bPeak <= mat.bh.bs) || !std::isfinite(bPeak))
+  if (!(bPeak <= bsHot) || !std::isfinite(bPeak))
     throw std::runtime_error("inductor spec infeasible: Bpeak over Bs");
   const double rolloff = 1.0 - lPk / l0;
   if (!(rolloff <= spec.maxRolloff))
@@ -406,27 +429,28 @@ InductorDesign designGappedInductor(const InductorSpec& spec, const CoreGeometry
   const double perCycle = hyst.loss() - before;
   const double hystW = perCycle * spec.freqHz * core.ve;
   const double eddyW =
-      eddyLossDensity(mat.rho, mat.lamThickness, spec.freqHz, bAcPk) * core.ve;
+      eddyLossDensity(rhoCoreHot, mat.lamThickness, spec.freqHz, bAcPk) * core.ve;
   // Window fill + DC copper (MLT*N*rho/Aw at Irms); budget covers total.
   const double fill =
       static_cast<double>(n) * winding.wireAreaM2 / core.windowArea;
   if (!(fill <= winding.maxFill))
     throw std::runtime_error("inductor spec infeasible: window fill over limit");
   const double rDc =
-      core.mlt * static_cast<double>(n) * winding.resistivity / winding.wireAreaM2;
+      core.mlt * static_cast<double>(n) * rhoCu / winding.wireAreaM2;
   const double copperW = rDc * spec.iRms * spec.iRms;
   // Dowell AC copper on the ripple (round wire -> square equivalent,
-  // skin depth from winding resistivity, full layers).
+  // skin depth from hot winding resistivity, full layers).
   const double dWire = 2.0 * std::sqrt(winding.wireAreaM2 / kPi);
   const double hSq = 0.25 * kPi * dWire;
-  const double skin = std::sqrt(winding.resistivity / (kPi * spec.freqHz * kMu0));
+  const double skin = std::sqrt(rhoCu / (kPi * spec.freqHz * kMu0));
   const double iAc = 0.5 * spec.iRipplePkPk / std::sqrt(3.0);
   const double acCopperW = dowellFactor(winding.layers, hSq / skin) * rDc * iAc * iAc;
   if (spec.lossBudgetW > 0.0 && hystW + eddyW + copperW + acCopperW > spec.lossBudgetW)
     throw std::runtime_error("inductor spec infeasible: total loss over budget");
   return InductorDesign{static_cast<int>(n), lg,        bPeak,  l0,
                         lPk,               rolloff,    hystW,  eddyW,
-                        copperW,           acCopperW,  fill};
+                        copperW,           acCopperW,  fill,   rDc,
+                        spec.tempC};
 }
 
 }  // namespace magnetics

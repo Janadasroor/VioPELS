@@ -31,6 +31,7 @@ Headless C++20 system-level power-electronics engine.
   state-space export, shooting steady-state, THD/ripple toolkit,
   grid×netlist sweep (threaded) + Monte Carlo tolerance analysis
 - Magnetics & EMI: hysteresis core + eddy loss, reluctance networks,
+  Tj-aware inductor synthesis (Cu rho(T), hot-Bs bound, Dowell at temp),
   conducted-EMI screening (DC LISN + CISPR 32 Class B)
 - Interop: installable CMake package (`find_package` smoke-tested),
   FMI 2.0 co-simulation export (XSD-validated) + FMI 2.0 CS import

@@ -781,3 +781,121 @@ TEST(InductorDesign, AcCopperLoss) {
   noLayers.layers = 0;
   EXPECT_THROW(designGappedInductor(spec, core, mat, noLayers), std::runtime_error);
 }
+
+// Temperature coupling (item 21d): resistivity rho(T), hot Bs bound, and
+// the caller-side fixed-point thermal loop.
+TEST(WindingTemp, ResistivityScalesLinearly) {
+  using namespace power_engine::magnetics;
+  WindingSpec w{1e-6};
+  EXPECT_DOUBLE_EQ(windingResistivityAtTemp(w, 20.0), 17.2e-9);  // identity
+  const double rho100 = windingResistivityAtTemp(w, 100.0);
+  EXPECT_NEAR(rho100 / 17.2e-9, 1.0 + 0.00393 * 80.0, 1e-12);  // Cu exact
+  WindingSpec alu{1e-6};
+  alu.resistivity = 28.2e-9;
+  alu.tempAlpha = 0.00429;
+  EXPECT_NEAR(windingResistivityAtTemp(alu, 100.0) / 28.2e-9,
+              1.0 + 0.00429 * 80.0, 1e-12);
+  WindingSpec noTc{1e-6};
+  noTc.tempAlpha = 0.0;
+  EXPECT_DOUBLE_EQ(windingResistivityAtTemp(noTc, 200.0), 17.2e-9);
+  EXPECT_THROW(windingResistivityAtTemp(w, std::numeric_limits<double>::quiet_NaN()),
+               std::runtime_error);
+  WindingSpec badAlpha{1e-6};
+  badAlpha.tempAlpha = -1.0;
+  EXPECT_THROW(windingResistivityAtTemp(badAlpha, 100.0), std::runtime_error);
+}
+
+TEST(InductorDesign, HotCopperScalesWithRho) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  WindingSpec wound{1e-6};
+  const InductorDesign cold = designGappedInductor(spec, core, mat, wound);
+  InductorSpec hot = spec;
+  hot.tempC = 100.0;
+  const InductorDesign d = designGappedInductor(hot, core, mat, wound);
+  EXPECT_EQ(d.turns, cold.turns);  // inert Bs: same synthesis
+  EXPECT_DOUBLE_EQ(d.tempC, 100.0);
+  const double rhoRatio = (1.0 + 0.00393 * 80.0);
+  EXPECT_NEAR(d.copperLossW / cold.copperLossW, rhoRatio, 1e-12);  // exact
+  EXPECT_NEAR(d.dcrOhm, d.copperLossW / (0.4 * 0.4), 1e-15);
+  EXPECT_GT(d.acCopperLossW, cold.acCopperLossW);  // rho + skin both rise
+  EXPECT_EQ(d.windowFill, cold.windowFill);
+}
+
+TEST(InductorDesign, HotBsTightensAndCanCollapse) {
+  using namespace power_engine::magnetics;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  mat.bsTempCoeff = -0.002;  // ferrite-like
+  WindingSpec wound{1e-6};
+  InductorSpec hot = spec;
+  hot.tempC = 100.0;
+  const InductorDesign d = designGappedInductor(hot, core, mat, wound);
+  const double bsHot = 0.4 * (1.0 - 0.002 * 80.0);
+  EXPECT_GT(d.turns, 5);        // synthesis compensates the shrunken bound
+  EXPECT_LE(d.bPeak, bsHot);    // verification enforces the HOT bound
+  // (no tightness pin: integer-N steps leave up to a turn of slack)
+  // Aggressive margin + steep tempco: feasible cold, infeasible hot.
+  InductorSpec tight = spec;
+  tight.bMaxMargin = 0.95;
+  CoreMaterial steep = mat;
+  steep.bsTempCoeff = -0.008;
+  EXPECT_NO_THROW(designGappedInductor(tight, core, steep, wound));
+  InductorSpec tightHot = tight;
+  tightHot.tempC = 100.0;
+  EXPECT_THROW(designGappedInductor(tightHot, core, steep, wound), std::runtime_error);
+}
+
+TEST(InductorDesign, ThermalFeedbackConverges) {
+  using namespace power_engine::magnetics;
+  using namespace power_engine;
+  InductorSpec spec;
+  spec.inductance = 200e-6;
+  spec.iPeak = 0.6;
+  spec.iRms = 0.4;
+  spec.iRipplePkPk = 0.3;
+  spec.freqHz = 20e3;
+  CoreGeometry core{1e-4, 0.05, 5e-6, 0.04, 2e-5};
+  CoreMaterial mat{{0.4, 30.0, 20.0}, 10.0, 0.0};
+  WindingSpec wound{1e-6};
+  // Caller-side fixed point: T <- Tamb + Rth * P(T), closed-form Foster
+  // steady state (documented in thermal.h). Copper rises with T, so the
+  // loop must converge upward from ambient.
+  const double tamb = 25.0, rth = 30.0;
+  double t = tamb, pPrev = 0.0;
+  for (int k = 0; k < 10; ++k) {
+    InductorSpec s = spec;
+    s.tempC = t;
+    const InductorDesign d = designGappedInductor(s, core, mat, wound);
+    const double p = d.copperLossW + d.acCopperLossW + d.eddyLossW + d.hysteresisLossW;
+    if (k == 0) pPrev = p;
+    t = tamb + rth * p;
+  }
+  EXPECT_GT(t, tamb);  // losses lift T off ambient
+  InductorSpec s0 = spec, sH = spec;
+  sH.tempC = t;
+  const double p0 = designGappedInductor(s0, core, mat, wound).copperLossW;
+  const double pH = designGappedInductor(sH, core, mat, wound).copperLossW;
+  EXPECT_GT(pH, p0);  // hotter copper dissipates more (no runaway here)
+  // Fixed point: one more iteration barely moves.
+  InductorSpec sH2 = spec;
+  sH2.tempC = t;
+  const InductorDesign dH = designGappedInductor(sH2, core, mat, wound);
+  const double tNext =
+      tamb + rth * (dH.copperLossW + dH.acCopperLossW + dH.eddyLossW + dH.hysteresisLossW);
+  EXPECT_LT(std::abs(tNext - t), 0.5);
+  (void)pPrev;
+}
