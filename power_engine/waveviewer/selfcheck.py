@@ -80,6 +80,41 @@ class TemplateSimTest(unittest.TestCase):
                     self.assertGreater(len(tr.time), 10)
 
 
+class SnapshotTest(unittest.TestCase):
+    """Snapshot path (canvas PostScript + gs PNG). Needs X + ghostscript;
+    skipped loudly otherwise (e.g. CI runners)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+            root.destroy()
+        except Exception as e:
+            raise unittest.SkipTest(f"no display: {e}")
+        import shutil
+        if shutil.which("gs") is None:
+            raise unittest.SkipTest("no ghostscript")
+
+    def test_snapshot_renders_zoom(self):
+        import wview
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = os.path.join(d, "run.csv")
+            with open(csv_path, "w") as f:
+                f.write("time,v:1\n0,0\n1e-6,5\n2e-6,5\n")
+            app = wview.App(preload=csv_path)
+            try:
+                app.update_idletasks()
+                app.update()
+                app.cv.x0, app.cv.x1 = 0.0, 2e-6
+                png = app.snapshot()
+                self.assertTrue(png and os.path.isfile(png), "no PNG written")
+                self.assertGreater(os.path.getsize(png), 0, "empty PNG")
+            finally:
+                app.destroy()
+
+
 if __name__ == "__main__":
     if "--pe" in sys.argv:
         TemplateSimTest.PE = sys.argv[sys.argv.index("--pe") + 1]

@@ -13,6 +13,7 @@ the `pe` binary, one-click Plot of the result.
 import os
 import subprocess
 import sys
+import tempfile
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -235,6 +236,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Browse…", command=self._browse2).pack(side="left", padx=2)
         ttk.Button(bar, text="Load", command=self._load).pack(side="left", padx=6)
         ttk.Button(bar, text="Reset zoom", command=lambda: self.cv.reset_zoom()).pack(side="left")
+        ttk.Button(bar, text="Snapshot", command=self.snapshot).pack(side="left", padx=2)
 
         mid = ttk.Frame(tab)
         mid.pack(fill="both", expand=True)
@@ -273,6 +275,8 @@ class App(tk.Tk):
         except (ValueError, KeyError, OSError) as e:
             messagebox.showerror("load failed", str(e))
             return
+        self.f1.set(mains[0])
+        self.f2.set(overlay or "")
         probes = self.cv.set_runs(runs)
         for w in self.probebox.winfo_children()[1:]:
             w.destroy()
@@ -291,6 +295,40 @@ class App(tk.Tk):
     def _retoggle(self):
         self.cv.shown = {p: v.get() for p, v in self._probe_vars.items()}
         self.cv.redraw()
+
+    def snapshot(self):
+        """Render the CURRENT canvas (zoom/probes as shown) for the assistant.
+
+        Writes <csv>.snapshot.png (via canvas PostScript + ghostscript) and
+        <csv>.snapshot.id (Tk window id for `xwd -id` live capture). Paths
+        go to the status bar; failures report loudly, never silently.
+        """
+        base = self.f1.get().strip() or os.path.join(tempfile.gettempdir(),
+                                                     "wview_snapshot")
+        eps, png, wid = base + ".snapshot.eps", base + ".snapshot.png", \
+            base + ".snapshot.id"
+        try:
+            self.cv.update_idletasks()
+            self.cv.postscript(file=eps, colormode="color")
+        except tk.TclError as e:
+            messagebox.showerror("snapshot failed", f"postscript export: {e}")
+            return None
+        try:
+            pr = subprocess.run(["gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE",
+                                 "-sDEVICE=png16m", "-r100",
+                                 f"-sOutputFile={png}", eps],
+                                capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            messagebox.showerror("snapshot failed", f"ghostscript: {e}")
+            return None
+        if pr.returncode != 0 or not os.path.isfile(png):
+            messagebox.showerror("snapshot failed",
+                                 f"ghostscript exit {pr.returncode}: {pr.stderr[:300]}")
+            return None
+        with open(wid, "w") as f:
+            f.write(str(self.winfo_id()))
+        self.status.config(text=f"snapshot: {png}  (window id -> {wid})")
+        return png
 
     # -- Netlist tab --------------------------------------------------
     def _build_netlist(self, nb):
