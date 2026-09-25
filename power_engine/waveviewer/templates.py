@@ -44,10 +44,28 @@ C1 2 0 1u
 .end
 """
 
+PUSHPULL = """\
+.param R 10
+.model SW mosfet_ideal RON=5m ROFF=1Meg
+.model DD diode_ideal VF=0.7 RON=10m
+V1 1 0 12
+S1 2 0 MODEL=SW
+S2 3 0 MODEL=SW
+T1 1 2 4 0 RATIO=0.5
+T2 1 3 4 0 RATIO=0.5
+D1 4 5 MODEL=DD
+C1 5 0 100u
+Rload 5 0 {R}
+.control pwm switch=S1 freq=50k duty=0.45 complement=S2 deadtime=300n
+.tran 0.2u 2m
+.end
+"""
+
 TEMPLATES = {
     "buck (PWM)": BUCK,
     "boost (PWM)": BOOST,
     "RC step": RC,
+    "push-pull converter": PUSHPULL,
 }
 
 
