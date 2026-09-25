@@ -6,7 +6,8 @@
   `addSwitch` (Ron/Roff + `closed` gate + Eon/Eoff), `addDiode`
   (anode/cathode, Vf, Ron/Roff, `conducting`), `addTransformer`
   (primary/secondary + ratio), `setSwitch` lookup. `numExtraUnknowns()`
-  counts MNA branch rows (1 per V-source, 2 per transformer).
+  counts MNA branch rows (1 per V-source, 2 per transformer, 3 per
+  center-tap).
 - `src/solver/solver.cpp`: MNA assembly + trapezoidal companions:
   - C: `G=2C/dt`, `Ihist=-G*Vprev-Iprev`
   - L: `G=dt/2L`, `Ihist=Iprev+G*Vprev`
@@ -56,6 +57,9 @@
   - Transformer: branch currents Ip/Is with rows `Vp-n*Vs=0`,
     `n*Ip+Is=0` (KCL coupling kept; ideal algebraic, DC passes — no
     magnetics/saturation by design).
+  - CenterTapTransformer: IA/IB/IS with rows `(VA-VCT)-n*Vs=0`,
+    `(VCT-VB)-n*Vs=0`, `n*(IA+IB)+IS=0` (shared core: the off half
+    flies to 2*Vin; secondary row entries zeroed, column KCL kept).
   - Solved per-step with `Eigen::PartialPivLU` (dense) / `SparseLU`
     (rows >= 64, symbolic pattern cached); singular → throw. Cached
     factors are reused across unchanged-signature steps (see above).

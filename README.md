@@ -8,7 +8,8 @@ Headless C++20 system-level power-electronics engine.
 ## Scope
 - Circuit: R, L, C, V/I sources, ideal Switch (Ron/Roff, Eon/Eoff, tail,
   slew-limited `tsw` transitions), ideal Diode (Vf, Ron/Roff, Qrr
-  recovery), ideal Transformer (ratio), coupled inductors (M/k),
+  recovery), ideal Transformer (ratio), center-tap transformer
+  (shared-core push-pull), coupled inductors (M/k),
   saturable inductor (tanh λ(i), Newton), hysteresis core, nodal
   reluctance network + windings, ground `0`
 - Solver: fixed-step trapezoidal MNA (opt-in step-doubling adaptive;

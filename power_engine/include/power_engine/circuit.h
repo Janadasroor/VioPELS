@@ -38,6 +38,12 @@ class Circuit {
   /// Vp/Vs = ratio, ratio*Ip + Is = 0. Algebraic (no magnetics).
   void addTransformer(const std::string& name, int np1, int nm1, int np2, int nm2,
                       double ratio = 1.0);
+  /// Ideal center-tap transformer: half A (na,nct), half B (nct,nb),
+  /// secondary (nsp,nsn). Shared-core constraints with ratio n =
+  /// Np_half/Ns: (VA-VCT) - n*Vs = 0, (VCT-VB) - n*Vs = 0,
+  /// n*(IA + IB) + IS = 0. Algebraic (no magnetics).
+  void addCenterTapTransformer(const std::string& name, int na, int nct, int nb,
+                               int nsp, int nsn, double ratio = 1.0);
   /// Coupled inductors: winding 1 (n1a,n1b, L1), winding 2 (n2a,n2b, L2),
   /// dots at n1a and n2a, coupling 0 < k < 1 (M = k*sqrt(L1*L2)).
   /// k = 1 is rejected (singular companion); use Transformer instead.

@@ -541,16 +541,33 @@ struct Elaborator {
         break;
       }
       case 'T': {
-        if (pos.size() != 4 && pos.size() != 5) {
-          fail(line, "transformer needs: Tname n1 n2 n3 n4 [RATIO=n]");
+        if (pos.size() != 4 && pos.size() != 5 && pos.size() != 6) {
+          fail(line, "transformer needs: Tname n1 n2 n3 n4 [RATIO=n] or "
+                      "Tname nA nCT nB nS+ nS- RATIO=n (center-tap)");
         }
         double ratio = 2.0;
-        if (pos.size() == 5) {
-          ratio = value(pos[4], line);
+        if (pos.size() == 6) {
+          // Center-tap with positional ratio.
+          ratio = value(pos[5], line);
+        } else if (pos.size() == 5 && kv.find("RATIO") == kv.end()) {
+          ratio = value(pos[4], line);  // legacy 4-node positional ratio
         } else {
           ratio = kvNum(kv, "RATIO", ratio, line);
         }
         if (!(ratio > 0.0) || !std::isfinite(ratio)) fail(line, "RATIO must be positive");
+        if (pos.size() >= 5 && kv.find("RATIO") != kv.end()) {
+          // 5 nodes + RATIO key: shared-core center-tap.
+          c.addCenterTapTransformer(name, nodeId(pos[0], line), nodeId(pos[1], line),
+                                    nodeId(pos[2], line), nodeId(pos[3], line),
+                                    nodeId(pos[4], line), ratio);
+          break;
+        }
+        if (pos.size() == 6) {
+          c.addCenterTapTransformer(name, nodeId(pos[0], line), nodeId(pos[1], line),
+                                    nodeId(pos[2], line), nodeId(pos[3], line),
+                                    nodeId(pos[4], line), ratio);
+          break;
+        }
         c.addTransformer(name, nodeId(pos[0], line), nodeId(pos[1], line),
                          nodeId(pos[2], line), nodeId(pos[3], line), ratio);
         break;
@@ -1068,6 +1085,10 @@ std::string NetlistResult::serialize() const {
       case DeviceType::Transformer:
         os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " " << nid(d.n3) << " "
            << nid(d.n4) << " RATIO=" << d.ratio << "\n";
+        break;
+      case DeviceType::CenterTapTransformer:
+        os << d.name << " " << nid(d.n1) << " " << nid(d.n2) << " " << nid(d.n3) << " "
+           << nid(d.n4) << " " << nid(d.n5) << " RATIO=" << d.ratio << "\n";
         break;
       case DeviceType::CoupledInductor: {
         const double k = d.m / std::sqrt(d.l1 * d.l2);

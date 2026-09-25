@@ -73,6 +73,7 @@ void TransientSolver::rebuildMaps() {
   rowC_.assign(devs.size(), -1);
   rowD_.assign(devs.size(), -1);
   rowE_.assign(devs.size(), -1);
+  rowF_.assign(devs.size(), -1);
   std::size_t k = 0;
   for (std::size_t i = 0; i < devs.size(); ++i) {
     const auto& d = devs[i];
@@ -94,6 +95,18 @@ void TransientSolver::rebuildMaps() {
       extraRow_[d.name] = nodeList_.size() + k;
       rowE_[i] = static_cast<int>(nodeList_.size() + k);
       k += 2;  // Ip row then Is row
+    } else if (d.type == DeviceType::CenterTapTransformer) {
+      const int r3 = nodeRow(d.n3);
+      const int r4 = nodeRow(d.n4);
+      const int r5 = nodeRow(d.n5);
+      if (r3 == -2 || r4 == -2 || r5 == -2)
+        throw std::runtime_error("internal error: stale node map");
+      rowC_[i] = r3;  // half-B end
+      rowD_[i] = r4;  // secondary +
+      rowF_[i] = r5;  // secondary -
+      extraRow_[d.name] = nodeList_.size() + k;
+      rowE_[i] = static_cast<int>(nodeList_.size() + k);
+      k += 3;  // IA row, IB row, IS row
     } else if (d.type == DeviceType::CoupledInductor) {
       const int r3 = nodeRow(d.n3);
       const int r4 = nodeRow(d.n4);
@@ -150,6 +163,11 @@ void TransientSolver::initialize() {
       d.v_prev = 0.0;
       d.i_prev = 0.0;
       d.i2_prev = 0.0;
+    } else if (d.type == DeviceType::CenterTapTransformer) {
+      d.v_prev = 0.0;
+      d.i_prev = 0.0;
+      d.i2_prev = 0.0;
+      d.i3_prev = 0.0;
     } else if (d.type == DeviceType::CoupledInductor) {
       d.v_prev = 0.0;
       d.v2_prev = 0.0;
@@ -354,6 +372,49 @@ void TransientSolver::assemble(bool withMatrix) const {
         z(rIs) = 0.0;
         break;
       }
+      case DeviceType::CenterTapTransformer: {
+        // Shared core, ratio n:1 per half (Vp_half/Vs = n). Unknowns IA
+        // (n1->n2), IB (n2->n3), IS (n4->n5). KCL coupling like three
+        // zero-volt sources, plus:
+        //   row IA: (VA-VCT) - n*Vs = 0
+        //   row IB: (VCT-VB) - n*Vs = 0
+        //   row IS: n*IA + n*IB + IS = 0  (power conservation)
+        const auto base = static_cast<Eigen::Index>(rowE_[i]);
+        const auto rIA = base;
+        const auto rIB = base + 1;
+        const auto rIS = base + 2;
+        const double n = d.ratio;
+        const int r3 = rowC_[i];
+        const int r4 = rowD_[i];
+        const int r5 = rowF_[i];
+        if (withMatrix) stampBranch(r1, r2, rIA);
+        if (withMatrix) stampBranch(r2, r3, rIB);
+        if (withMatrix) stampBranch(r4, r5, rIS);
+        // Rows rIA/rIB read the half voltages; extend with -n*Vs.
+        if (withMatrix) {
+          if (r4 >= 0) {
+            A(rIA, r4) -= n;
+            A(rIB, r4) -= n;
+          }
+          if (r5 >= 0) {
+            A(rIA, r5) += n;
+            A(rIB, r5) += n;
+          }
+        }
+        // Row rIS reads Vs+ - Vs- = 0; replace the ROW entries (keep the
+        // COLUMN KCL coupling of IS) with n*IA + n*IB + IS = 0.
+        if (withMatrix) {
+          if (r4 >= 0) A(rIS, r4) = 0.0;
+          if (r5 >= 0) A(rIS, r5) = 0.0;
+          A(rIS, rIA) += n;
+          A(rIS, rIB) += n;
+          A(rIS, rIS) += 1.0;
+        }
+        z(rIA) = 0.0;
+        z(rIB) = 0.0;
+        z(rIS) = 0.0;
+        break;
+      }
       case DeviceType::CoupledInductor: {
         // Trapezoidal 2-port Norton from flux linkage L*i with
         // L = [[L1,M],[M,L2]]: i_{n+1} = G*v_{n+1} + hist,
@@ -534,6 +595,9 @@ TransientSolver::MatrixSig TransientSolver::matrixSig() const {
         hashWord(h, dblBits(d.roff));
         break;
       case DeviceType::Transformer:
+        hashWord(h, dblBits(d.ratio));
+        break;
+      case DeviceType::CenterTapTransformer:
         hashWord(h, dblBits(d.ratio));
         break;
       case DeviceType::SatInductor:
@@ -720,6 +784,8 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
       case DeviceType::VoltageSource:
       case DeviceType::Transformer:
         break;  // branch currents handled below from extra unknowns
+      case DeviceType::CenterTapTransformer:
+        break;  // IA/IB/IS handled below from extra unknowns
       case DeviceType::CoupledInductor: {
         const double det = d.l1 * d.l2 - d.m * d.m;
         const double v2New = vRow(rowC_[i]) - vRow(rowD_[i]);
@@ -817,6 +883,12 @@ void TransientSolver::updateHistories(const Eigen::VectorXd& x, HistHow how) {
       const auto base = static_cast<Eigen::Index>(rowE_[i]);
       d.i_prev = x(base);        // Ip, primary n1->n2
       d.i2_prev = x(base + 1);   // Is, secondary n3->n4
+      d.v_prev = vRow(rowA_[i]) - vRow(rowB_[i]);
+    } else if (d.type == DeviceType::CenterTapTransformer) {
+      const auto base = static_cast<Eigen::Index>(rowE_[i]);
+      d.i_prev = x(base);        // IA, half A n1->n2
+      d.i2_prev = x(base + 1);   // IB, half B n2->n3
+      d.i3_prev = x(base + 2);   // IS, secondary n4->n5
       d.v_prev = vRow(rowA_[i]) - vRow(rowB_[i]);
     }
   }

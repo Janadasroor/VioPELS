@@ -157,6 +157,24 @@ void Circuit::addTransformer(const std::string& name, int np1, int nm1, int np2,
   devices_.push_back(d);
 }
 
+void Circuit::addCenterTapTransformer(const std::string& name, int na, int nct, int nb,
+                                      int nsp, int nsn, double ratio) {
+  checkNodes(na, nct);
+  checkNodes(nct, nb);
+  checkNodes(nsp, nsn);
+  if (!(ratio > 0.0) || !std::isfinite(ratio)) {
+    throw std::runtime_error("center-tap transformer ratio must be positive finite");
+  }
+  checkNameUnique(devices_, name);
+  noteTopologyChange();
+  Device d = makeDevice(DeviceType::CenterTapTransformer, name, na, nct, 0.0);
+  d.n3 = nb;
+  d.n4 = nsp;
+  d.n5 = nsn;
+  d.ratio = ratio;
+  devices_.push_back(d);
+}
+
 void Circuit::addCoupledInductors(const std::string& name, int n1a, int n1b, int n2a, int n2b,
                                  double l1, double l2, double k, double il10, double il20) {
   checkNodes(n1a, n1b);
@@ -276,6 +294,10 @@ std::vector<int> Circuit::nodes() const {
     if (d.type == DeviceType::Transformer || d.type == DeviceType::CoupledInductor) {
       if (d.n3 != 0) s.insert(d.n3);
       if (d.n4 != 0) s.insert(d.n4);
+    } else if (d.type == DeviceType::CenterTapTransformer) {
+      if (d.n3 != 0) s.insert(d.n3);
+      if (d.n4 != 0) s.insert(d.n4);
+      if (d.n5 != 0) s.insert(d.n5);
     }
   }
   return {s.begin(), s.end()};
@@ -295,6 +317,8 @@ std::size_t Circuit::numExtraUnknowns() const {
       n += 1;
     } else if (d.type == DeviceType::Transformer) {
       n += 2;  // primary + secondary branch currents
+    } else if (d.type == DeviceType::CenterTapTransformer) {
+      n += 3;  // IA + IB + IS branch currents
     }
   }
   return n;

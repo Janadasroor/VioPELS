@@ -15,6 +15,14 @@ enum class DeviceType {
   Switch,  ///< Ideal switch stamped as Ron/Roff, gate-controlled.
   Diode,   ///< Ideal diode: Ron+Vf when on, Roff when off, auto-commutated.
   Transformer,  ///< Ideal transformer, algebraic: Vp = ratio*Vs, ratio*Ip + Is = 0.
+  CenterTapTransformer,  ///< Ideal 3-winding center-tap (push-pull):
+  ///< (n1,n2) = half A (end, center-tap), (n2,n3) = half B (tap, end),
+  ///< (n4,n5) = secondary. Shared-core constraints with ratio n =
+  ///< Np_half/Ns: (VA-VCT) - n*Vs = 0, (VCT-VB) - n*Vs = 0,
+  ///< n*(IA + IB) + IS = 0 (power conservation; IA: n1->n2, IB: n2->n3,
+  ///< IS: n4->n5). DC passes like Transformer (ideal algebraic model,
+  ///< no magnetizing inductance or saturation). The off half flies to
+  ///< 2*Vin — what two independent 2-winding parts cannot reproduce.
   CoupledInductor,  ///< Two windings with mutual M (trapezoidal 2-port Norton).
   SatInductor,  ///< Saturable inductor: lambda(i) = Lsat*i + (Lunsat-Lsat)*Isat*tanh(i/Isat).
   HystereticInductor,  ///< Hysteretic inductor: N-turn winding on a tanh
@@ -40,6 +48,7 @@ struct Device {
   int n2 = 0;
   int n3 = 0;  // transformer secondary + / coupled winding 2 +
   int n4 = 0;  // transformer secondary - / coupled winding 2 -
+  int n5 = 0;  // center-tap secondary - (0 = ground)
   double value = 0.0;
   double ratio = 1.0;  // transformer turns ratio (primary:secondary)
   double ic = 0.0;     // initial condition: Vc(0) for C, Il(0) for L / coupled i1
@@ -70,6 +79,8 @@ struct Device {
   double v_prev = 0.0;   // V(n1)-V(n2) at previous step
   double i_prev = 0.0;   // current n1->n2 at previous step
   double i2_prev = 0.0;  // transformer secondary current n3->n4
+  double i3_prev = 0.0;  // center-tap only: secondary current n4->n5
+                         // (i_prev = IA, i2_prev = IB for that type)
   // Coupled-inductor second winding history.
   double v2_prev = 0.0;  // V(n3)-V(n4) at previous step
   // TR-BDF2 intra-step midpoint state (solver-managed scratch: captured

@@ -628,3 +628,67 @@ TEST(Converters, LlcFhaGainMatchesTheory) {
     EXPECT_NEAR(sum / n, kVin * fha(fn), 0.10 * kVin * fha(fn)) << "fn=" << fn;
   }
 }
+
+// Center-tap transformer statics: grounded CT, half A driven at 12V,
+// half B open, secondary into 100 ohms, n = 0.5. Shared-core constraints
+// demand VA - VCT = n*Vs and VCT - VB = n*Vs, i.e. the undriven half
+// flies to -12V while the secondary sits at +24V (classic push-pull
+// polarity, impossible with two independent 2-winding parts).
+TEST(Converters, CenterTapStaticFlyback) {
+  Engine eng;
+  eng.setTimeStep(1e-6);
+  eng.circuit().addVoltageSource("Vin", 2, 0, 12.0);
+  eng.circuit().addCenterTapTransformer("T1", 2, 0, 3, 4, 0, 0.5);
+  eng.circuit().addResistor("Rload", 4, 0, 100.0);
+  eng.clearStopTime();
+  eng.start();
+  eng.runUntil(1e-3);
+  const auto& probes = eng.currentSolution().probes;
+  EXPECT_NEAR(probes.at("v:2"), 12.0, 1e-9);
+  EXPECT_NEAR(probes.at("v:3"), -12.0, 1e-9);  // off half flyback
+  EXPECT_NEAR(probes.at("v:4"), 24.0, 1e-9);
+  // Power conservation: 12V * IA = 24V * IS.
+  EXPECT_NEAR(eng.deviceCurrent("T1"), 0.48, 1e-9);
+  // Shared-core identity holds exactly: VA - 2*VCT + VB = 0.
+  EXPECT_NEAR(probes.at("v:2") - 2.0 * 0.0 + probes.at("v:3"), 0.0, 1e-9);
+}
+
+// Push-pull with the shared-core part: the off switch must fly to 2*Vin
+// (the user's v:2/v:3 complaint), output regulation unchanged.
+TEST(Converters, PushPullCenterTapSwitchesTo2Vin) {
+  Engine eng;
+  eng.loadNetlist(R"(
+.model SW mosfet_ideal RON=5m ROFF=1Meg
+.model DD diode_ideal VF=0.7 RON=10m
+V1 1 0 12
+S1 2 0 MODEL=SW
+S2 3 0 MODEL=SW
+T1 2 1 3 4 0 RATIO=0.5
+D1 4 5 MODEL=DD
+C1 5 0 100u
+Rload 5 0 10
+.control pwm switch=S1 freq=50k duty=0.45 complement=S2 deadtime=300n
+.tran 0.2u 2m
+.end
+)");
+  eng.applyPwmSpecs();
+  eng.clearStopTime();
+  std::vector<std::pair<double, double>> v2, v5;
+  eng.setCallback([&](const power_engine::Solution& sol) {
+    v2.emplace_back(sol.t, sol.probes.at("v:2"));
+    v5.emplace_back(sol.t, sol.probes.at("v:5"));
+  });
+  eng.start();
+  eng.runUntil(2e-3);
+  double maxV2 = -1e9, sum5 = 0;
+  int n5 = 0;
+  for (const auto& [t, v] : v2) maxV2 = std::max(maxV2, v);
+  for (const auto& [t, v] : v5)
+    if (t > 1e-3) {
+      sum5 += v;
+      ++n5;
+    }
+  EXPECT_GT(maxV2, 20.0);  // off half flies toward 2*Vin = 24V
+  ASSERT_GT(n5, 0);
+  EXPECT_NEAR(sum5 / n5, 23.2, 0.5);  // regulation unchanged
+}

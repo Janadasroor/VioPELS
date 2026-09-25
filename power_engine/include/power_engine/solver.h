@@ -255,6 +255,7 @@ class TransientSolver {
   // Precomputed MNA rows per device index (-1 = ground).
   std::vector<int> rowA_, rowB_, rowC_, rowD_;
   std::vector<int> rowE_;  // extra-var base row per device (-1 if none)
+  std::vector<int> rowF_;  // center-tap secondary- row per device (-1 if none)
   bool hasNonlinear_ = false;  // any saturable inductor present
   bool hasDiodes_ = false;     // any diode present (scan fast path)
   // Topology version seen at the last rebuildMaps() (R5). Compared per
