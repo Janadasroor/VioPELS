@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <stdexcept>
 
@@ -1114,7 +1115,9 @@ void TransientSolver::restore(const Snapshot& s) {
 bool TransientSolver::newtonUpdate(const Eigen::VectorXd& x) {
   auto vRow = [&](int r) -> double { return r < 0 ? 0.0 : x(static_cast<Eigen::Index>(r)); };
   auto& devs = circuit_.mutableDevices();
-  bool converged = true;
+  // Pass 1: candidate fixed-point residual (normalized, max over sats).
+  double res = 0.0;
+  std::vector<std::pair<std::size_t, double>> updates;
   for (std::size_t i = 0; i < devs.size(); ++i) {
     auto& d = devs[i];
     if (d.type != DeviceType::SatInductor) continue;
@@ -1134,12 +1137,29 @@ bool TransientSolver::newtonUpdate(const Eigen::VectorXd& x) {
       const double ieq = d.newton_ik - (lam - d.flux) / ld + g * d.v_prev;
       inew = g * v + ieq;
     }
-    if (std::abs(inew - d.newton_ik) > kNewtonAbsTol + kNewtonRelTol * std::abs(inew)) {
-      converged = false;
-    }
-    d.newton_ik = inew;
+    const double delta = inew - d.newton_ik;
+    res = std::max(res, std::abs(delta) / (kNewtonAbsTol + kNewtonRelTol * std::abs(inew)));
+    updates.emplace_back(i, inew);
   }
-  return converged;
+  // Pass 2: damp the fixed-point update when the residual is not
+  // contracting (floor 1/16). Pure monitor when everything behaves:
+  // alpha stays 1.0, trajectories are bit-identical to the undamped loop.
+  if (std::isinf(lastNewtonRes_) || res <= lastNewtonRes_) {
+    lineSearchAlpha_ = std::min(1.0, lineSearchAlpha_ * 2.0);
+  } else {
+    lineSearchAlpha_ *= 0.5;
+    if (lineSearchAlpha_ < 1.0 / 16.0) {
+      ++stats_.lineSearchFailures;
+      lineSearchAlpha_ = 1.0 / 16.0;
+    }
+  }
+  const double alpha = lineSearchAlpha_;
+  for (const auto& [i, inew] : updates) {
+    auto& d = devs[i];
+    d.newton_ik += alpha * (inew - d.newton_ik);
+  }
+  lastNewtonRes_ = res;
+  return res <= 1.0;
 }
 
 /// One converged solve at the current dt_/stage: Newton loop for saturable
@@ -1147,6 +1167,8 @@ bool TransientSolver::newtonUpdate(const Eigen::VectorXd& x) {
 /// cached path otherwise; diode iteration inside in both cases.
 void TransientSolver::convergeStep() {
   if (hasNonlinear_) {
+    lineSearchAlpha_ = 1.0;
+    lastNewtonRes_ = std::numeric_limits<double>::infinity();
     for (auto& d : circuit_.mutableDevices())
       if (d.type == DeviceType::SatInductor) d.newton_ik = d.i_prev;
     for (int k = 0; k < kMaxNewtonIters; ++k) {

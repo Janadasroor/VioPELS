@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -48,6 +49,9 @@ struct SolverStats {
   long long diodeCapHits = 0;  ///< diode loops that exhausted kMaxDiodeIters
                                ///< and accepted the last state (refine-roadmap
                                ///< R4 safety-net monitor; ~0 on all fixtures)
+  long long lineSearchFailures = 0;  ///< saturable-Newton steps where the
+                               ///< damping hit its floor with no residual
+                               ///< improvement (1.4 monitor; ~0 everywhere)
 };
 
 /// Opaque solver snapshot: clock, last solution vector, and full device
@@ -241,6 +245,12 @@ class TransientSolver {
   Eigen::VectorXd xPrevAuto_;   ///< previous committed solution (auto scan)
   bool havePrevAuto_ = false;
   int cleanSteps_ = 0;
+  // Damped Newton state for the saturable fixed-point loop (1.4): alpha is
+  // halved when the residual fails to decrease (floor 1/16), restored
+  // when it does. Reset per convergeStep(); additive, no default-path
+  // behavior change except on pathological loops.
+  double lineSearchAlpha_ = 1.0;
+  double lastNewtonRes_ = std::numeric_limits<double>::infinity();
   Eigen::VectorXd xStart_;      ///< step-start solution (embedded estimate)
   Eigen::VectorXd xMid_;        ///< half-step solution (embedded estimate)
   double lastEmbeddedErr_ = -1.0;

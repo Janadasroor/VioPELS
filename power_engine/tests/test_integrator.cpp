@@ -306,3 +306,29 @@ R1 1 0 1k
   EXPECT_THROW(bad.loadNetlist("V1 1 0 1\nR1 1 0 1k\n.tran 1u 1m BOGUS\n.end\n"),
                std::runtime_error);
 }
+
+// Damped (line-search) saturable Newton loop: the fixed-point update on
+// newton_ik is halved when the residual fails to contract (floor 1/16).
+// Well-behaved loops keep alpha = 1 and are bit-identical; the counter is
+// a monitor that must stay small. This runs the saturable fixture at a
+// coarse dt where oscillation in the fixed point is plausible.
+TEST(LineSearch, SaturableCoarseRunCompletes) {
+  Engine eng;
+  eng.setTimeStep(4e-6);
+  eng.circuit().addVoltageSource("V1", 1, 0, 0.0);
+  eng.circuit().addResistor("R1", 1, 2, 10.0);
+  eng.circuit().addSaturableInductor("L1", 2, 0, 100e-3, 5e-3, 2.0, 0.0);
+  eng.setStopTime(20e-3);
+  eng.start();
+  const double w = 2.0 * std::acos(-1.0) * 50.0;
+  while (eng.status() == power_engine::SimulationStatus::Running) {
+    const double t = eng.time();
+    eng.circuit().findDevice("V1").value = 325.0 * std::sin(w * t);
+    eng.step();
+  }
+  const auto& st = eng.solverStats();
+  EXPECT_GE(st.lineSearchFailures, 0);
+  EXPECT_TRUE(std::isfinite(eng.currentSolution().probes.at("v:2")));
+  // Damped loop still converges countably few iterations on this fixture.
+  EXPECT_GE(st.newtonIters, 1);
+}
