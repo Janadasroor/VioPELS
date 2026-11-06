@@ -1,6 +1,7 @@
 # Power-engine capability roadmap
 
-Status basis: commit `dd65c6a` (Phase 0). Read with `refine-roadmap.md`
+Status basis: commits `dd65c6a` (Phase 0) → `a21c65b` (roadmap) →
+Phase 1.1 done. Read with `refine-roadmap.md`
 (hardening track) and `power_engine/ARCHITECTURE.md` (implementation
 notes). Goal: a reference-class, headless power-electronics circuit
 simulator — robust, fast, scriptable, and trustworthy, with better
@@ -74,7 +75,7 @@ Goal: variable-step timestepping exists and is trustworthy; analyses
 are usable tools, not just library calls. Order by risk: tooling first,
 new integrator second, scale benchmark third.
 
-### 1.1 `pe steady-state` (S, ~0.5–1 wk)
+### 1.1 `pe steady-state` (S) — DONE
 
 Subcommand wrapping the periodic shooting harness for CLI use.
 

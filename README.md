@@ -27,8 +27,8 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 252 tests,
-  28 suites, zero warnings
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 257 tests,
+  29 suites, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
   grid×netlist sweep (threaded) + Monte Carlo tolerance analysis
@@ -67,6 +67,18 @@ in-process test seam, no spawned processes in tests).
 ./build/power_engine/tools/pe sweep --netlist buck.net \
   --axis RLOAD=4,5,6 --measure 'last(v:3)' --jobs 0
 ```
+
+`steady-state` finds the periodic orbit by Newton on the period map
+(timescale-separated: thermals freeze over one period):
+```sh
+./build/power_engine/tools/pe steady-state --netlist buck.net --auto
+./build/power_engine/tools/pe steady-state --netlist buck.net \
+  --period 50e-6 --pop 3 --out orbit.csv
+```
+`--auto` derives the period from a single-frequency `.control pwm` net;
+stdout prints `converged=<0|1> iters=<n> residual=<r>`; exit 0 on
+convergence, 1 on sim error or non-convergence, 2 on usage error.
+`--out` records one steady period as a `time,<probes>` CSV.
 
 Plotting (`power_engine/plots/`, matplotlib recipes over `pe` CSVs):
 ```sh
