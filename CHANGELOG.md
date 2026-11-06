@@ -58,7 +58,19 @@ FullPivLU(0x0) guard fix; MSVC C4996/C4459 fixes; shooting rejects
 hysteretic memory loudly instead of converging wrong orbits.
 Declined with evidence: diode breakpoint location (straddle already
 mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
-domain stays <100 nodes). 262 tests / 30 suites.
+domain stays <100 nodes). 263 tests / 30 suites.
+
+Phase 1 complete: damped saturable-Newton line search (1.4; two-pass
+residual+damp, floor 1/16, `SolverStats::lineSearchFailures` monitor,
+bit-identical on well-behaved loops); switched-sparse scaling benchmark
+(1.5; `pe_scaling` — n=2000 at ~0.53 ms/step sub-cubic under gate-edge
+churn, 94.5% cache hits, KLU stays declined). 1.3 (DOPRI) formally
+declined with engineering justification: explicit RK needs a pointwise
+ẋ = f(x,t) this implicit-MNA engine doesn't have; the statespace path is
+explicit but excludes magnetics/saturable/hysteresis and can't re-settle
+diodes in-stage; at ideal switching discontinuities error control is
+LTE-bypassed anyway. Stiffness stays TR-BDF2/AUTO; any RK-flavor
+high-order variant belongs in Phase 2 (Radau IIA).
 
 ## [0.2.0] — 2026-09-22
 

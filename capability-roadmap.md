@@ -1,7 +1,9 @@
 # Power-engine capability roadmap
 
 Status basis: commits `dd65c6a` (Phase 0) → `a21c65b` (roadmap) →
-Phase 1.1 + 1.2 done. Read with `refine-roadmap.md`
+`0f03b58` (1.1) → `0112ee7` (1.2) → `64c3e30` (1.5) → `929a210` (1.4).
+Phase 1 closed: 1.1/1.2/1.4/1.5 done, 1.3 declined. Read with
+`refine-roadmap.md`
 (hardening track) and `power_engine/ARCHITECTURE.md` (implementation
 notes). Goal: a reference-class, headless power-electronics circuit
 simulator — robust, fast, scriptable, and trustworthy, with better
@@ -69,11 +71,12 @@ semiconductor data licensing.
 - [ ] Future: a CI lint step that fails when README/CHANGELOG quote
   stale test/suite counts.
 
-## Phase 1 — solver credibility (~6–8 weeks)
+## Phase 1 — solver credibility (~6–8 weeks) — CLOSED (1.3 declined)
 
 Goal: variable-step timestepping exists and is trustworthy; analyses
 are usable tools, not just library calls. Order by risk: tooling first,
-new integrator second, scale benchmark third.
+new integrator second, scale benchmark third. Outcome: tools 1.1/1.2
+shipped; 1.3 declined with engineering evidence; 1.4/1.5 done.
 
 ### 1.1 `pe steady-state` (S) — DONE
 
@@ -107,55 +110,60 @@ Perturbation-based Bode directly from the CLI.
 - Exit criterion: RC Bode within 0.5 dB/4° of theory; buck Gvd within
   1.5 dB of the second-order plant model; CLI test on both.
 
-### 1.3 DOPRI 5(4) adaptive integrator (L, ~2–3 wk)
+### 1.3 DOPRI 5(4) adaptive integrator (L, ~2–3 wk) — DECLINED (engineering, 2026-11-06)
 
-- Embedded RK pair: 5th-order DOPRI used for propagation, 4th-order
-  for error estimation; controller reuses the `AdaptiveConfig`
-  clamp/grow/accept machinery from the step-doubling path.
-- Event straddle LTE-bypass ports over unchanged (measurements already
-  show err pinning to ~1 at event straddles — accept at current dt).
-- Netlist: `.tran dt tstop [TRAP|TRBDF2|AUTO|DOPRI]`; `Engine::
-  setIntegrator("dopri")`.
-- Factorization: dt is in the FNV key ⇒ near-zero cache hits;
-  refactorize per attempt (dense ≤ ~200 nodes fine; sparse path at
-  >= 64 rows with cached pattern is reusable unchanged). Drop the
-  FNV recompute for this integrator.
-- Output density stays user-controlled (`OutputTimes`-style refine
-  factor later if needed).
-- Exit criterion: ngspice cross-validation parity on buck + Vienna
-  fixtures at comparable or better step counts; no regression in the
-  252-test suite; `BASELINE.md` entries (or explicit "cache bypassed"
-  note); perf documented against trap.
+An explicit RK method needs a pointwise `ẋ = f(x, t)` evaluation. This
+engine has none: the transient solver is an implicit fixed-step MNA with
+history (trapezoidal/BDF2) companions; every step solves the
+companion system with Newton + diode iteration, not a pointwise RHS.
+The one explicit evaluation path (state-space export per frozen switch
+vector, Kron-style) excludes magnetics/saturable/hysteresis (restriction
+thrown), has no in-stage diode re-solve, and would amount to a parallel
+engine rather than an integrator. At ideal switching discontinuities
+error control is LTE-bypassed by construction (event-straddle accept at
+current dt), so DOPRI's 5th-order buys nothing across exactly the events
+power electronics is made of. Stiffness stays TR-BDF2/AUTO, which cover
+the regime without an explicit-RHS path. Phase 2 (Radau IIA + analytical
+Jacobian + zero-crossing event location, evaluated ON the statespace
+path) is the correct home for any RK-flavor high-order variant — reopen
+1.3 there with a frozen-state explicit-RHS design, or accept the decline
+like KLU/partitioning before it.
 
-### 1.4 Damped Newton in the transient path (M, ~1 wk)
+Historical (from the original plan):
 
-- Add backtracking line search on the Newton residual norm inside the
-  saturable-loop (25-iter cap unchanged); if the residual fails to
-  decrease after k backsteps, fall back to the last accepted stage
-  and count `lineSearchFailures` (new stat, honest throw on final
-  failure).
-- No change to accepted inputs; regression test on the hardest
-  fixture (Vienna diode bridge).
+- Embedded RK pair controller reuse + `.tran [DOPRI]` keyword.
+- Factorization: variable dt defeats the FNV cache (by design).
+- Exit criterion would have been ngspice parity + full-suite green.
 
-### 1.5 Switched-sparse scaling benchmark (S, ~0.5–1 wk)
+### 1.4 Damped Newton in the transient path (M) — DONE
 
-- New fixture family: passive ladders scaled to n ∈ {100, 200, 500,
-  1000, 2000} **with 50+ switches** injected (cache invalidation
-  pressure, unlike the current passive-only ladder fixtures).
-- Report per-step cost, refactorize rate, cache hit-rate, wall-clock.
-- Output: table in `power_engine/bench/` + decision note: if the
-  switched curve stays sub-cubic to n=2000, KLU stays declined; else
-  reopen with data.
+- Backtracking line search on the Newton residual norm inside the
+  saturable-loop (25-iter cap unchanged); two-pass residual+damp update
+  with alpha floor 1/16; `lineSearchFailures` in SolverStats (monitor).
+- Bit-identical default trajectory; regression test
+  `LineSearch.SaturableCoarseRunCompletes` on the 230Vrms/50Hz sat
+  fixture.
+
+### 1.5 Switched-sparse scaling benchmark (S) — DONE
+
+- `pe_scaling` (bench/scaling.cpp + bench/SCALING_SPARSE.md): switched
+  RC ladder n ∈ {100, 200, 500, 1000, 2000}, ~50 switch+diode shunt
+  branches, staggered gates (100+ edges per run). n=2000 at
+  ~0.53 ms/step (sub-cubic), SparseLU every step, 94.5% cache hits
+  unchanged across sizes. KLU stays declined on this evidence.
 
 **Phase 1 non-goals:** no Radau yet (plumbing first, core second); no
 zero-crossing relocation (needs Phase 2 evidence); no device-level
 changes.
 
+**Phase 1 outcome:** 1.1, 1.2, 1.4, 1.5 done; 1.3 formally declined
+(see above). Phase 1 closes here; the stiffness/high-order work lives
+in Phase 2.
+
 ## Phase 2 — implicit variable-step core (~10–12 weeks)
 
-The centerpiece. DOPRI covers non-stiff workloads; the rest of the
-desert is stiff circuits (fast diodes, tiny time constants, breakpoint
-density).
+The centerpiece. Stiff circuits (fast diodes, tiny time constants,
+breakpoint density) are the remaining desert.
 
 - `Integrator::RadauIIA`: 3-stage, order 5, L-stable; continuous
   extension for dense output so `runUntil`/probes land exactly.
