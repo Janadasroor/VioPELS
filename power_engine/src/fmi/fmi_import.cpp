@@ -3,9 +3,9 @@
 #include "power_engine/fmi_import.h"
 
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 
 #include "power_engine/engine.h"
@@ -45,13 +45,12 @@ std::string statusName(int s) {
 }
 
 std::string readFile(const std::string& path) {
-  FILE* f = std::fopen(path.c_str(), "rb");
+  std::ifstream f(path, std::ios::binary);
   if (!f) throw std::runtime_error("fmi import: cannot open " + path);
-  std::string out;
-  char buf[1 << 12];
-  std::size_t n = 0;
-  while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
-  std::fclose(f);
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  const std::string out = ss.str();
+  if (f.bad()) throw std::runtime_error("fmi import: error reading " + path);
   return out;
 }
 

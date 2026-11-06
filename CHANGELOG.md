@@ -60,6 +60,13 @@ Declined with evidence: diode breakpoint location (straddle already
 mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
 domain stays <100 nodes). 263 tests / 30 suites.
 
+Engine usability polish: MSVC C4996 crash fixed in `src/fmi/fmi_import.cpp`
+(fmi import now uses `std::ifstream` instead of raw `FILE*`/`fopen` —
+the sole Windows-lane CI blocker on `main`); googletest no longer leaks
+into the install tree (`INSTALL_GTEST OFF`); install layout verified
+clean (headers + `power_engine` + `pe` only) and the find_package
+consumer smoke test passes against a real install prefix.
+
 Phase 1 complete: damped saturable-Newton line search (1.4; two-pass
 residual+damp, floor 1/16, `SolverStats::lineSearchFailures` monitor,
 bit-identical on well-behaved loops); switched-sparse scaling benchmark
