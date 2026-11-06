@@ -44,7 +44,7 @@ FullPivLU(0x0) guard fix; MSVC C4996/C4459 fixes; shooting rejects
 hysteretic memory loudly instead of converging wrong orbits.
 Declined with evidence: diode breakpoint location (straddle already
 mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
-domain stays <100 nodes). 232 tests / 27 suites, CI 11/11 green.
+domain stays <100 nodes). 252 tests / 28 suites.
 
 ## [0.2.0] — 2026-09-22
 

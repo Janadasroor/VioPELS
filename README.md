@@ -27,8 +27,8 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 232 tests,
-  24 binaries, zero warnings
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 252 tests,
+  28 suites, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
   grid×netlist sweep (threaded) + Monte Carlo tolerance analysis
@@ -102,7 +102,8 @@ cmake --build build-san && ctest --test-dir build-san --output-on-failure
 CI (`.github/workflows/ci.yml`, 12 jobs): Release matrix over
 Ubuntu/Windows/macOS × gcc/clang/MSVC plus ASan+UBSan, Ninja,
 install-smoke, ngspice cross-validation, plots workflow, fuzz corpus, and FMI
-pack+check jobs — all green.
+pack+check jobs. (Windows lane is MSVC-sensitive: `tests/fmu_stub/stub.c` must
+keep named parameters — MSVC rejects unnamed ones with C2055.)
 
 ## Cross-validation vs ngspice + benchmark
 

@@ -20,14 +20,19 @@ typedef struct {
 const char* fmi2GetTypesPlatform(void) { return fmi2TypesPlatform; }
 const char* fmi2GetVersion(void) { return fmi2Version; }
 
-fmi2Status fmi2SetDebugLogging(fmi2Component, fmi2Boolean, size_t,
-                               const fmi2String[]) {
+fmi2Status fmi2SetDebugLogging(fmi2Component c, fmi2Boolean loggingOn,
+                               size_t nCategories,
+                               const fmi2String categories[]) {
+  (void)c; (void)loggingOn; (void)nCategories; (void)categories;
   return fmi2OK;
 }
 
-fmi2Component fmi2Instantiate(fmi2String, fmi2Type fmuType, fmi2String,
-                              fmi2String, const fmi2CallbackFunctions*,
-                              fmi2Boolean, fmi2Boolean) {
+fmi2Component fmi2Instantiate(fmi2String instanceName, fmi2Type fmuType,
+                              fmi2String fmuGUID, fmi2String fmuResourceLocation,
+                              const fmi2CallbackFunctions* functions,
+                              fmi2Boolean visible, fmi2Boolean loggingOn) {
+  (void)instanceName; (void)fmuGUID; (void)fmuResourceLocation;
+  (void)functions; (void)visible; (void)loggingOn;
   if (fmuType != fmi2CoSimulation) return NULL;
   Stub* s = (Stub*)calloc(1, sizeof(Stub));
   if (s) {
@@ -41,8 +46,11 @@ fmi2Component fmi2Instantiate(fmi2String, fmi2Type fmuType, fmi2String,
 
 void fmi2FreeInstance(fmi2Component c) { free(c); }
 
-fmi2Status fmi2SetupExperiment(fmi2Component c, fmi2Boolean,
-                               fmi2Real, fmi2Real, fmi2Boolean, fmi2Real) {
+fmi2Status fmi2SetupExperiment(fmi2Component c, fmi2Boolean toleranceDefined,
+                               fmi2Real tolerance, fmi2Real startTime,
+                               fmi2Boolean stopTimeDefined, fmi2Real stopTime) {
+  (void)toleranceDefined; (void)tolerance; (void)startTime;
+  (void)stopTimeDefined; (void)stopTime;
   return c ? fmi2OK : fmi2Error;
 }
 
@@ -99,16 +107,19 @@ fmi2Status fmi2GetReal(fmi2Component c, const fmi2ValueReference vr[],
                        size_t n, fmi2Real v[]) {
   return c ? getReal((Stub*)c, vr, n, v) : fmi2Error;
 }
-fmi2Status fmi2SetInteger(fmi2Component c, const fmi2ValueReference[],
-                          size_t, const fmi2Integer[]) {
+fmi2Status fmi2SetInteger(fmi2Component c, const fmi2ValueReference vr[],
+                          size_t nvr, const fmi2Integer values[]) {
+  (void)vr; (void)nvr; (void)values;
   return c ? fmi2Error : fmi2Error;
 }
-fmi2Status fmi2GetInteger(fmi2Component c, const fmi2ValueReference[],
-                          size_t, fmi2Integer[]) {
+fmi2Status fmi2GetInteger(fmi2Component c, const fmi2ValueReference vr[],
+                          size_t nvr, fmi2Integer values[]) {
+  (void)vr; (void)nvr; (void)values;
   return c ? fmi2Error : fmi2Error;
 }
-fmi2Status fmi2SetBoolean(fmi2Component c, const fmi2ValueReference[],
-                          size_t, const fmi2Boolean[]) {
+fmi2Status fmi2SetBoolean(fmi2Component c, const fmi2ValueReference vr[],
+                          size_t nvr, const fmi2Boolean values[]) {
+  (void)vr; (void)nvr; (void)values;
   return c ? fmi2Error : fmi2Error;
 }
 static fmi2Status getBool(Stub* s, const fmi2ValueReference vr[], size_t n,
@@ -126,20 +137,24 @@ fmi2Status fmi2GetBoolean(fmi2Component c, const fmi2ValueReference vr[],
                           size_t n, fmi2Boolean v[]) {
   return c ? getBool((Stub*)c, vr, n, v) : fmi2Error;
 }
-fmi2Status fmi2SetString(fmi2Component c, const fmi2ValueReference[],
-                         size_t, const fmi2String[]) {
+fmi2Status fmi2SetString(fmi2Component c, const fmi2ValueReference vr[],
+                         size_t nvr, const fmi2String values[]) {
+  (void)vr; (void)nvr; (void)values;
   return c ? fmi2Error : fmi2Error;
 }
-fmi2Status fmi2GetString(fmi2Component c, const fmi2ValueReference[],
-                         size_t, fmi2String[]) {
+fmi2Status fmi2GetString(fmi2Component c, const fmi2ValueReference vr[],
+                         size_t nvr, fmi2String values[]) {
+  (void)vr; (void)nvr; (void)values;
   return c ? fmi2Error : fmi2Error;
 }
 
-fmi2Status fmi2DoStep(fmi2Component c, fmi2Real, fmi2Real stepSize,
-                      fmi2Boolean) {
+fmi2Status fmi2DoStep(fmi2Component c, fmi2Real currentCommunicationPoint,
+                      fmi2Real communicationStepSize,
+                      fmi2Boolean noSetFMUStatePriorToCurrentPoint) {
   Stub* s;
+  (void)currentCommunicationPoint; (void)noSetFMUStatePriorToCurrentPoint;
   if (!c) return fmi2Error;
-  if (!(stepSize > 0.0)) return fmi2Error;
+  if (!(communicationStepSize > 0.0)) return fmi2Error;
   s = (Stub*)c;
   s->err = s->vref - s->vout;
   s->gate = (s->vout < s->vref) ? 1 : 0;
