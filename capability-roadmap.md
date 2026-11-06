@@ -1,7 +1,7 @@
 # Power-engine capability roadmap
 
 Status basis: commits `dd65c6a` (Phase 0) → `a21c65b` (roadmap) →
-Phase 1.1 done. Read with `refine-roadmap.md`
+Phase 1.1 + 1.2 done. Read with `refine-roadmap.md`
 (hardening track) and `power_engine/ARCHITECTURE.md` (implementation
 notes). Goal: a reference-class, headless power-electronics circuit
 simulator — robust, fast, scriptable, and trustworthy, with better
@@ -90,7 +90,7 @@ Subcommand wrapping the periodic shooting harness for CLI use.
 - Exit criterion: buck + a PFC demo converge to |residual| < tol;
   new CLI test proves the harness end-to-end in-process.
 
-### 1.2 `pe ac` (M, ~1–2 wk)
+### 1.2 `pe ac` (M) — DONE
 
 Perturbation-based Bode directly from the CLI.
 

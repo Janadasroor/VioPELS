@@ -10,7 +10,7 @@ FetchContent_MakeAvailable(googletest)
 set(PE_TESTS test_rc test_rlc test_switch test_buck test_netlist test_control test_thermal   test_converters test_magnetics test_adaptive test_recovery test_ac test_steadystate
   test_measurements test_waveforms test_loopgain test_loss_tables test_electrothermal
   test_multitone test_statespace test_machine   test_sweep test_integrator test_emi
-  test_sensing test_cli test_cli_sweep test_cli_steadystate test_fmi_import)
+  test_sensing test_cli test_cli_sweep test_cli_steadystate test_cli_ac test_fmi_import)
 
 add_subdirectory(fmu_stub)
 
@@ -48,6 +48,9 @@ target_link_libraries(test_cli_sweep PRIVATE pe_cli)
 add_executable(test_cli_steadystate test_cli_steadystate.cpp)
 target_include_directories(test_cli_steadystate PRIVATE ${CMAKE_SOURCE_DIR}/power_engine/tools/pe)
 target_link_libraries(test_cli_steadystate PRIVATE pe_cli)
+add_executable(test_cli_ac test_cli_ac.cpp)
+target_include_directories(test_cli_ac PRIVATE ${CMAKE_SOURCE_DIR}/power_engine/tools/pe)
+target_link_libraries(test_cli_ac PRIVATE pe_cli)
 add_executable(test_fmi_import test_fmi_import.cpp)
 target_compile_definitions(test_fmi_import PRIVATE
   FMU_STUB_DIR="fmu_stub/stage/fmu_unpack")
@@ -84,5 +87,6 @@ add_test(NAME Emi COMMAND test_emi)
 add_test(NAME Sensing COMMAND test_sensing)
 add_test(NAME Cli COMMAND test_cli)
 add_test(NAME CliSweep COMMAND test_cli_sweep)
+add_test(NAME CliAc COMMAND test_cli_ac)
 add_test(NAME CliSteadyState COMMAND test_cli_steadystate)
 add_test(NAME FmiImport COMMAND test_fmi_import)

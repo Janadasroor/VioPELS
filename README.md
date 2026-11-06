@@ -27,8 +27,8 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 257 tests,
-  29 suites, zero warnings
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 262 tests,
+  30 suites, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
   grid×netlist sweep (threaded) + Monte Carlo tolerance analysis
@@ -79,6 +79,22 @@ in-process test seam, no spawned processes in tests).
 stdout prints `converged=<0|1> iters=<n> residual=<r>`; exit 0 on
 convergence, 1 on sim error or non-convergence, 2 on usage error.
 `--out` records one steady period as a `time,<probes>` CSV.
+
+`ac` writes a Bode sweep (settle-then-measure, exact e^{-jwt} kernel,
+DC-rejected):
+```sh
+# RC low-pass from 100Hz to 10kHz
+./build/power_engine/tools/pe ac --netlist rc.net --probe v:2 \
+  --from 100 --to 10000 --points 17 --settle 6e-3 --out bode.csv
+# buck control-to-output Gvd via duty perturbation
+./build/power_engine/tools/pe ac --netlist buck.net --inject duty:S1 \
+  --probe v:3 --from 100 --to 5000 --points 9 --settle 5e-3 --out gvd.csv
+```
+`--inject src:<name>` modulates an independent source (default: the only
+one); `--inject duty:<switch>` modulates a `.control pwm` switch's carrier
+duty (exact edge scheduling, alias-checked against pwm/2). `--method
+multitone` runs all tones in one simulation (prime-snapped bin grid).
+CSV columns: `freq,<probe>_mag_db,<probe>_phase_deg`.
 
 Plotting (`power_engine/plots/`, matplotlib recipes over `pe` CSVs):
 ```sh

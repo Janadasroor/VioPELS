@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "cmd_ac.h"
 #include "cmd_run.h"
 #include "cmd_steadystate.h"
 #include "cmd_sweep.h"
@@ -17,5 +18,6 @@ int main(int argc, char** argv) {
   pe::registerRunCommand();
   pe::registerSweepCommand();
   pe::registerSteadyStateCommand();
+  pe::registerAcCommand();
   return pe::dispatch(std::vector<std::string>(argv + 1, argv + argc), std::cout, std::cerr);
 }

@@ -44,6 +44,13 @@ steady-orbit CSV. stdout prints `converged=/iters=/residual=`; exit 0 on
 convergence, 1 on non-convergence, 2 on usage. Hysteretic nets rejected
 (memory state unmappable); `.tran tstop` ignored (command sets horizons).
 
+`pe ac` CLI (Phase 1 tooling): settle-then-measure Bode via the Fourier
+meter — source modulation (`src:`) or PWM duty modulation (`duty:`, exact
+analytic edge scheduling, pwm/2 alias check), log grid `--from/--to/
+--points`, `--method stepped|multitone` (bin-snapped, Schroeder phases),
+`freq,<probe>_mag_db,<probe>_phase_deg` CSV. RC Bode and buck Gvd match
+analytic plants; ZOH footprint documented (keep f*dt <= ~0.01).
+
 Correctness: coverage 91.63% -> 93.96% (steadystate 100%/100%,
 statespace 99.4%/98.8%); statespace current-source sign fix (uniform
 KCL-leaving incidence; Vf-averaged-DC end-to-end) + Debug-only
@@ -51,7 +58,7 @@ FullPivLU(0x0) guard fix; MSVC C4996/C4459 fixes; shooting rejects
 hysteretic memory loudly instead of converging wrong orbits.
 Declined with evidence: diode breakpoint location (straddle already
 mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
-domain stays <100 nodes). 257 tests / 29 suites.
+domain stays <100 nodes). 262 tests / 30 suites.
 
 ## [0.2.0] — 2026-09-22
 
