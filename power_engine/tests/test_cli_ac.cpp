@@ -41,7 +41,6 @@ Rload 3 0 5
 
 const std::string kRcPath = "pe_cli_ac_rc_tmp.net";
 const std::string kBuckPath = "pe_cli_ac_buck_tmp.net";
-const std::string kCsvPath = "pe_cli_ac_out_tmp.csv";
 
 void writeFile(const std::string& path, const std::string& content) {
   std::ofstream f(path, std::ios::binary | std::ios::trunc);
