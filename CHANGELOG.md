@@ -64,6 +64,17 @@ Typed gate probes: `Solution::gates` carries `gate:<switch>` as a bool
 (logic signal kept distinct from physical `probes`); `pe run --probe
 gate:S1` prints it as a 0/1 CSV column. 264 tests / 30 suites.
 
+Phase 2.1 Radau IIA first slice: `Integrator::RadauIIA`, `.tran ...
+RADAU`, `pe run --method radau`. 3-stage order-5 L-stable collocation on
+the MNA DAE `G*y + M*dy/dt = b`, inductor currents promoted to explicit
+unknowns, diode state iteration at the endpoint. Verified order 5 (RC
+error shrinks 30.6x per dt halving), analytic RL current, open-loop buck
+at the CCM duty average. Explicit slice boundary (throws naming the
+device): no transformers/coupled/saturable/hysteretic magnetics, slew,
+recovery, adaptive stepping, or >512 unknowns. TRAP remains the default
+and is bit-identical. New suite `test_radau` (8 tests): 272 tests / 31
+suites.
+
 Engine usability polish: MSVC C4996 crash fixed in `src/fmi/fmi_import.cpp`
 (fmi import now uses `std::ifstream` instead of raw `FILE*`/`fopen` —
 the sole Windows-lane CI blocker on `main`); googletest no longer leaks

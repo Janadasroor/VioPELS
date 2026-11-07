@@ -48,7 +48,23 @@
     damps switch-excited Nyquist ringing ~1e65x on the interrupt fixture).
     BDF2 companions for C/L/coupled/sat (Newton included, frozen midpoint
     flux); midpoint history fields on Device; stage salt in the cache
-    signature;     `.tran dt tstop [TRAP|TRBDF2]`; `Engine::setIntegrator`.
+    signature;     `.tran dt tstop [TRAP|TRBDF2|RADAU]`; `Engine::setIntegrator`.
+  - Radau IIA (Phase 2 core, first slice, opt-in): 3-stage order-5
+    L-stable collocation evaluated directly on the MNA DAE
+    `G*y + M*dy/dt = b`, not on per-device companions. `y` is the usual
+    MNA vector plus one explicit current unknown per linear inductor
+    (companion methods eliminate those currents; the DAE needs them as
+    states). Stages solve the coupled 3m x 3m block system
+    `sum_j (dt*a_ij*G + delta_ij*M) K_j = b - G*y_n`; the stiffly
+    accurate third stage is `x_{n+1}`, and `K_3` gives capacitor currents
+    at commit. Diodes stay piecewise-linear: solve, check endpoint states,
+    re-solve (same kMaxDiodeIters pattern as `convergeStep`).
+    Measured order 5 (RC error ratio 30.6x per dt halving); buck lands at
+    the expected CCM average. Deliberate slice limits, each a clear throw
+    naming the device: transformers, coupled/saturable/hysteretic
+    magnetics, slew-limited switches (`tsw>0`), recovery (`trr/qrr/ttail`),
+    adaptive stepping, and >512 unknowns (dense stage solve). TRAP stays
+    the default and is bit-identical; Radau is never selected implicitly.
   - Auto stiffness switching (opt-in): trap while smooth, TR-BDF2 on
     diode-iteration pile-up (>=6 resolves/64 steps; normal clusters peak
     at 3, coarse stress at 13), Newton strain (>=8/step), or sustained
@@ -271,7 +287,8 @@
 - Command line (`tools/pe/`: `pe` binary, subcommand registry): `run`
   loads a netlist, applies .param/.tran overrides, expands .control pwm /
   .thermal / .etable, runs to stop, writes time,<probes> CSV (stdout or
-  --out), --probe filter, --method trap|trbdf2|auto; exit 0/1/2 (usage
+  --out), --probe filter (v:<node> or gate:<switch>), --method
+  trap|trbdf2|radau|auto; exit 0/1/2 (usage
   errors and unreadable inputs are 2, matching scripts). New commands =
   one cmd_<name>.cpp + one explicit registration call (static-init
   self-registration is silently dropped from static archives by the

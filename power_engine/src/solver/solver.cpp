@@ -122,6 +122,21 @@ void TransientSolver::rebuildMaps() {
   x_ = Eigen::VectorXd::Zero(n);
   workA_ = Eigen::MatrixXd::Zero(n, n);
   workZ_ = Eigen::VectorXd::Zero(n);
+  // Radau DAE layout (topology-fixed, like the maps above).
+  radauBase_ = static_cast<std::size_t>(n);
+  radauInductors_.clear();
+  radauLrow_.assign(devs.size(), -1);
+  for (std::size_t i = 0; i < devs.size(); ++i) {
+    if (devs[i].type == DeviceType::Inductor) {
+      radauLrow_[i] = static_cast<int>(radauBase_ + radauInductors_.size());
+      radauInductors_.push_back(i);
+    }
+  }
+  // Stage matrices are allocated lazily in radauStep(): a large circuit
+  // must not pay for a 3m x 3m block unless Radau is actually selected.
+  radauSys_.resize(0, 0);
+  radauRhs_.resize(0);
+  radauSol_.resize(0);
   if (n >= kSparseThreshold) {
     // Topology-fixed sparsity pattern: switch/diode states only change
     // values, so factor the symbolic pattern once here. (No status to
@@ -1308,9 +1323,294 @@ void TransientSolver::fixedStep(double dtNew) {
     trBdf2Step(dtNew);
     return;
   }
+  if (integ_ == Integrator::RadauIIA) {
+    radauStep(dtNew);
+    return;
+  }
   convergeStep();
   t_ += dt_;
   updateHistories(x_, HistHow::TrapPrev);
+  ++stats_.steps;
+}
+
+namespace {
+
+/// Radau IIA, s=3, order 5 (Hairer & Wanner). Stiffly accurate: the last
+/// row of A is also the quadrature weight, so the third stage state IS
+/// x_{n+1} and the third stage derivative is x'_{n+1}.
+struct Radau3 {
+  double c[3];
+  double a[3][3];
+};
+
+const Radau3& radau3() {
+  static const Radau3 r = [] {
+    const double s6 = std::sqrt(6.0);
+    Radau3 x{};
+    x.c[0] = (4.0 - s6) / 10.0;
+    x.c[1] = (4.0 + s6) / 10.0;
+    x.c[2] = 1.0;
+    x.a[0][0] = (88.0 - 7.0 * s6) / 360.0;
+    x.a[0][1] = (296.0 - 169.0 * s6) / 1800.0;
+    x.a[0][2] = (-2.0 + 3.0 * s6) / 225.0;
+    x.a[1][0] = (296.0 + 169.0 * s6) / 1800.0;
+    x.a[1][1] = (88.0 + 7.0 * s6) / 360.0;
+    x.a[1][2] = (-2.0 - 3.0 * s6) / 225.0;
+    x.a[2][0] = (16.0 - s6) / 36.0;
+    x.a[2][1] = (16.0 + s6) / 36.0;
+    x.a[2][2] = 1.0 / 9.0;
+    return x;
+  }();
+  return r;
+}
+
+const char* typeName(DeviceType t) {
+  switch (t) {
+    case DeviceType::Transformer: return "Transformer";
+    case DeviceType::CenterTapTransformer: return "CenterTapTransformer";
+    case DeviceType::CoupledInductor: return "CoupledInductor";
+    case DeviceType::SatInductor: return "SatInductor";
+    case DeviceType::HystereticInductor: return "HystereticInductor";
+    default: return "device";
+  }
+}
+
+}  // namespace
+
+void TransientSolver::radauCheckSupported() const {
+  const auto& devs = circuit_.devices();
+  for (const auto& d : devs) {
+    switch (d.type) {
+      case DeviceType::Transformer:
+      case DeviceType::CenterTapTransformer:
+      case DeviceType::CoupledInductor:
+      case DeviceType::SatInductor:
+      case DeviceType::HystereticInductor:
+        throw std::runtime_error(std::string("RadauIIA slice does not support ") +
+                                 typeName(d.type) + " '" + d.name +
+                                 "' (linear-stamped R/C/L + switches/diodes only)");
+      case DeviceType::Switch:
+      case DeviceType::SwitchDiode:
+        if (d.tsw > 0.0)
+          throw std::runtime_error("RadauIIA slice does not support slew-limited switch '" +
+                                   d.name + "' (tsw > 0)");
+        if (d.trr > 0.0 || d.qrr > 0.0 || d.ttail > 0.0)
+          throw std::runtime_error("RadauIIA slice does not support recovery on '" + d.name +
+                                   "' (trr/qrr/ttail > 0)");
+        break;
+      case DeviceType::Diode:
+        if (d.trr > 0.0 || d.qrr > 0.0)
+          throw std::runtime_error("RadauIIA slice does not support recovery on diode '" +
+                                   d.name + "' (trr/qrr > 0)");
+        if (d.recT > 0.0)
+          throw std::runtime_error("RadauIIA slice does not support active recovery on diode '" +
+                                   d.name + "'");
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+void TransientSolver::assembleRadauDae(Eigen::MatrixXd& G, Eigen::MatrixXd& Mm,
+                                       Eigen::VectorXd& b) const {
+  const auto m = static_cast<Eigen::Index>(radauBase_ + radauInductors_.size());
+  G.setZero(m, m);
+  Mm.setZero(m, m);
+  b.setZero(m);
+  // KCL coupling for a branch current flowing n1->n2 through row r.
+  auto stampBranch = [&](int r1, int r2, Eigen::Index r) {
+    if (r1 >= 0) {
+      G(r1, r) += 1.0;
+      G(r, r1) += 1.0;
+    }
+    if (r2 >= 0) {
+      G(r2, r) -= 1.0;
+      G(r, r2) -= 1.0;
+    }
+  };
+  // Dynamic (mass-matrix) stamp for a capacitance between two nodes.
+  auto stampC = [&](int r1, int r2, double c) {
+    if (r1 >= 0) Mm(r1, r1) += c;
+    if (r2 >= 0) Mm(r2, r2) += c;
+    if (r1 >= 0 && r2 >= 0) {
+      Mm(r1, r2) -= c;
+      Mm(r2, r1) -= c;
+    }
+  };
+
+  const auto& devs = circuit_.devices();
+  for (std::size_t i = 0; i < devs.size(); ++i) {
+    const auto& d = devs[i];
+    const int r1 = rowA_[i];
+    const int r2 = rowB_[i];
+    switch (d.type) {
+      case DeviceType::Resistor:
+        stampG(G, r1, r2, 1.0 / d.value);
+        break;
+      case DeviceType::Capacitor:
+        stampC(r1, r2, d.value);
+        break;
+      case DeviceType::Inductor: {
+        // v1-v2 - L*di/dt = 0, with i an explicit unknown.
+        const auto lr = static_cast<Eigen::Index>(radauLrow_[i]);
+        stampBranch(r1, r2, lr);
+        Mm(lr, lr) -= d.value;
+        break;
+      }
+      case DeviceType::CurrentSource:
+        stampI(b, r1, r2, d.value);
+        break;
+      case DeviceType::VoltageSource: {
+        const auto row = static_cast<Eigen::Index>(rowE_[i]);
+        stampBranch(r1, r2, row);
+        b(row) = d.value;
+        break;
+      }
+      case DeviceType::Switch:
+        stampG(G, r1, r2, 1.0 / switchResistance(d));
+        break;
+      case DeviceType::Diode: {
+        if (d.conducting) {
+          const double g = 1.0 / d.ron;
+          stampG(G, r1, r2, g);
+          stampI(b, r1, r2, -g * d.vf);
+        } else if (d.breakdown) {
+          const double g = 1.0 / zenerRbr(d);
+          stampG(G, r1, r2, g);
+          stampI(b, r1, r2, g * d.vbr);
+        } else {
+          stampG(G, r1, r2, 1.0 / d.roff);
+        }
+        break;
+      }
+      case DeviceType::SwitchDiode: {
+        if (d.closed) {
+          stampG(G, r1, r2, 1.0 / switchResistance(d));
+        } else if (d.conducting) {
+          const double g = 1.0 / d.ron;
+          stampG(G, r1, r2, g);
+          stampI(b, r1, r2, g * d.vf);
+        } else {
+          stampG(G, r1, r2, 1.0 / d.roff);
+        }
+        break;
+      }
+      default:
+        throw std::runtime_error(std::string("RadauIIA: unsupported ") + typeName(d.type) + " '" +
+                                 d.name + "'");
+    }
+  }
+}
+
+void TransientSolver::radauCommit(const Eigen::VectorXd& y, const Eigen::VectorXd& k) {
+  x_ = y.head(static_cast<Eigen::Index>(radauBase_));
+  auto vRow = [&](int r) -> double { return r < 0 ? 0.0 : y(static_cast<Eigen::Index>(r)); };
+  auto kRow = [&](int r) -> double { return r < 0 ? 0.0 : k(static_cast<Eigen::Index>(r)); };
+  auto& devs = circuit_.mutableDevices();
+  for (std::size_t i = 0; i < devs.size(); ++i) {
+    auto& d = devs[i];
+    const double vNew = vRow(rowA_[i]) - vRow(rowB_[i]);
+    switch (d.type) {
+      case DeviceType::Capacitor:
+        d.v_prev = vNew;
+        d.i_prev = d.value * (kRow(rowA_[i]) - kRow(rowB_[i]));
+        break;
+      case DeviceType::Inductor:
+        d.v_prev = vNew;
+        d.i_prev = y(static_cast<Eigen::Index>(radauLrow_[i]));
+        break;
+      case DeviceType::Resistor:
+        d.v_prev = vNew;
+        d.i_prev = vNew / d.value;
+        break;
+      case DeviceType::CurrentSource:
+        d.v_prev = vNew;
+        d.i_prev = d.value;
+        break;
+      case DeviceType::Switch:
+        d.v_prev = vNew;
+        d.i_prev = vNew / switchResistance(d);
+        d.closedPrev = d.closed;
+        break;
+      case DeviceType::Diode:
+        d.v_prev = vNew;
+        d.i_prev = d.conducting ? (vNew - d.vf) / d.ron
+                                : (d.breakdown ? (vNew + d.vbr) / zenerRbr(d) : vNew / d.roff);
+        break;
+      case DeviceType::SwitchDiode:
+        d.v_prev = vNew;
+        d.i_prev = d.closed ? vNew / switchResistance(d)
+                            : (d.conducting ? (vNew + d.vf) / d.ron : vNew / d.roff);
+        d.closedPrev = d.closed;
+        break;
+      case DeviceType::VoltageSource:
+        d.v_prev = d.value;
+        d.i_prev = x_(static_cast<Eigen::Index>(rowE_[i]));
+        break;
+      default:
+        break;  // rejected by radauCheckSupported()
+    }
+  }
+}
+
+void TransientSolver::radauStep(double dtNew) {
+  radauCheckSupported();
+  const auto m = static_cast<Eigen::Index>(radauBase_ + radauInductors_.size());
+  if (m > 512) {
+    throw std::runtime_error(
+        "RadauIIA slice supports at most 512 unknowns (dense 3-stage solve); "
+        "use TRAP/TRBDF2 for larger systems");
+  }
+  if (radauSys_.rows() != 3 * m) {
+    radauSys_.setZero(3 * m, 3 * m);
+    radauRhs_.setZero(3 * m);
+    radauSol_.setZero(3 * m);
+  }
+  dt_ = dtNew;
+  bdf2Stage_ = false;
+  const Radau3& r3 = radau3();
+  // Step-start DAE state: MNA vector + explicit inductor currents.
+  Eigen::VectorXd y = Eigen::VectorXd::Zero(m);
+  y.head(static_cast<Eigen::Index>(radauBase_)) = x_;
+  auto& devs = circuit_.mutableDevices();
+  for (std::size_t k = 0; k < radauInductors_.size(); ++k) {
+    y(static_cast<Eigen::Index>(radauBase_ + k)) = devs[radauInductors_[k]].i_prev;
+  }
+  // Piecewise-linear topology: solve, check diode states at the endpoint,
+  // and re-solve with corrected states (same pattern as convergeStep).
+  Eigen::MatrixXd G(m, m), Mm(m, m);
+  Eigen::VectorXd b(m);
+  Eigen::VectorXd yNew = y;
+  int iter = 0;
+  for (; iter < kMaxDiodeIters; ++iter) {
+    assembleRadauDae(G, Mm, b);
+    radauSys_.setZero();
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        radauSys_.block(i * m, j * m, m, m) += dtNew * r3.a[i][j] * G;
+      }
+      radauSys_.block(i * m, i * m, m, m) += Mm;
+    }
+    const Eigen::VectorXd Gy = G * y;
+    for (int i = 0; i < 3; ++i) radauRhs_.segment(i * m, m) = b - Gy;
+    Eigen::PartialPivLU<Eigen::MatrixXd> lu(radauSys_);
+    radauSol_ = lu.solve(radauRhs_);
+    if (!radauSol_.allFinite()) {
+      throw SingularError("RadauIIA stage system is singular");
+    }
+    yNew = y;
+    for (int j = 0; j < 3; ++j) {
+      yNew += dtNew * r3.a[2][j] * radauSol_.segment(j * m, m);
+    }
+    x_ = yNew.head(static_cast<Eigen::Index>(radauBase_));
+    if (!updateDiodeStates(x_)) break;
+    ++stats_.resolves;
+  }
+  if (iter == kMaxDiodeIters) ++stats_.diodeCapHits;
+  const Eigen::VectorXd kLast = radauSol_.segment(2 * m, m);
+  t_ += dtNew;
+  radauCommit(yNew, kLast);
   ++stats_.steps;
 }
 
@@ -1395,6 +1695,11 @@ void TransientSolver::step() {
     autoUpdate(static_cast<int>(stats_.newtonIters - n0),
                static_cast<int>(stats_.resolves - r0));
     return;
+  }
+  if (integ_ == Integrator::RadauIIA) {
+    throw std::runtime_error(
+        "RadauIIA is fixed-step in this slice; disable adaptive stepping "
+        "(adaptive control for Radau requires a step-doubling controller)");
   }
   if (integ_ == Integrator::TrBdf2) {
     // Embedded stage-difference control (one converged step per attempt).

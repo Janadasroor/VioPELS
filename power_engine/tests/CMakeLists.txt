@@ -13,7 +13,7 @@ FetchContent_MakeAvailable(googletest)
 set(PE_TESTS test_rc test_rlc test_switch test_buck test_netlist test_control test_thermal   test_converters test_magnetics test_adaptive test_recovery test_ac test_steadystate
   test_measurements test_waveforms test_loopgain test_loss_tables test_electrothermal
   test_multitone test_statespace test_machine   test_sweep test_integrator test_emi
-  test_sensing test_cli test_cli_sweep test_cli_steadystate test_cli_ac test_fmi_import)
+  test_sensing test_cli test_cli_sweep test_cli_steadystate test_cli_ac test_radau test_fmi_import)
 
 add_subdirectory(fmu_stub)
 
@@ -40,6 +40,7 @@ add_executable(test_statespace test_statespace.cpp)
 add_executable(test_machine test_machine.cpp)
 add_executable(test_sweep test_sweep.cpp)
 add_executable(test_integrator test_integrator.cpp)
+add_executable(test_radau test_radau.cpp)
 add_executable(test_emi test_emi.cpp)
 add_executable(test_sensing test_sensing.cpp)
 add_executable(test_cli test_cli.cpp)
@@ -86,6 +87,7 @@ add_test(NAME StateSpace COMMAND test_statespace)
 add_test(NAME Machine COMMAND test_machine)
 add_test(NAME Sweep COMMAND test_sweep)
 add_test(NAME Integrator COMMAND test_integrator)
+add_test(NAME Radau COMMAND test_radau)
 add_test(NAME Emi COMMAND test_emi)
 add_test(NAME Sensing COMMAND test_sensing)
 add_test(NAME Cli COMMAND test_cli)

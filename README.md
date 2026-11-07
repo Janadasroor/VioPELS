@@ -18,7 +18,7 @@ Headless C++20 system-level power-electronics engine.
   control); factorization caching; exact-time gate edges via sub-stepping;
   dense PartialPivLU / SparseLU auto-selection at 64 rows
 - Netlist: SPICE-like with SI suffixes, `{expressions}`, `.param`,
-  `.model`, `.tran [TRAP|TRBDF2|AUTO]`, `.control pwm`, `.thermal`,
+  `.model`, `.tran [TRAP|TRBDF2|RADAU|AUTO]`, `.control pwm`, `.thermal`,
   `.subckt`/X, `W`/`Y` magnetics
 - Control: PWM (trailing/symmetric, deadtime pair), PI + anti-windup,
   hysteretic comparator, SVPWM, state machine, half-bridge driver,
@@ -27,8 +27,8 @@ Headless C++20 system-level power-electronics engine.
   losses, Foster (exact update) / Cauer networks, `tj:<dev>` probes
 - Validated: buck (CCM/DCM, open/closed-loop, sync), boost, flyback,
   full-bridge SPWM, 3-ph SVPWM, Vienna diode bridge + closed-loop PFC,
-  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 264 tests,
-  30 suites, zero warnings
+  DAB, LLC, PMSM (hysteretic + field-oriented), induction; 272 tests,
+  31 suites, zero warnings
 - Analysis: Fourier-meter Bode, multitone, series-injection loop gain,
   state-space export, shooting steady-state, THD/ripple toolkit,
   grid×netlist sweep (threaded) + Monte Carlo tolerance analysis

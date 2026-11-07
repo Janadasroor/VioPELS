@@ -1,9 +1,10 @@
 # Power-engine capability roadmap
 
 Status basis: commits `dd65c6a` (Phase 0) → `a21c65b` (roadmap) →
-`0f03b58` (1.1) → `0112ee7` (1.2) → `64c3e30` (1.5) → `929a210` (1.4).
-Phase 1 closed: 1.1/1.2/1.4/1.5 done, 1.3 declined. Read with
-`refine-roadmap.md`
+`0f03b58` (1.1) → `0112ee7` (1.2) → `64c3e30` (1.5) → `929a210` (1.4) →
+`b691c12` (typed gate probes) → Phase 2.1 Radau slice.
+Phase 1 closed: 1.1/1.2/1.4/1.5 done, 1.3 declined. Phase 2 started:
+Radau IIA first slice landed. Read with `refine-roadmap.md`
 (hardening track) and `power_engine/ARCHITECTURE.md` (implementation
 notes). Goal: a reference-class, headless power-electronics circuit
 simulator — robust, fast, scriptable, and trustworthy, with better
@@ -160,13 +161,34 @@ changes.
 (see above). Phase 1 closes here; the stiffness/high-order work lives
 in Phase 2.
 
-## Phase 2 — implicit variable-step core (~10–12 weeks)
+## Phase 2 — implicit variable-step core (~10–12 weeks) — IN PROGRESS
 
 The centerpiece. Stiff circuits (fast diodes, tiny time constants,
 breakpoint density) are the remaining desert.
 
-- `Integrator::RadauIIA`: 3-stage, order 5, L-stable; continuous
-  extension for dense output so `runUntil`/probes land exactly.
+### 2.1 Radau IIA core — FIRST SLICE DONE
+
+- `Integrator::RadauIIA` / `.tran ... RADAU` / `pe run --method radau`:
+  3-stage, order 5, L-stable collocation on the MNA DAE
+  `G*y + M*dy/dt = b` with inductor currents promoted to explicit
+  unknowns. Fixed-step, dense stage solve.
+- Verified: order-5 convergence on the RC fixture (30.6x error reduction
+  per dt halving), analytic RL current, open-loop buck at the CCM duty
+  average, `.tran` keyword plumbing, gate probes work unchanged.
+  `test_radau.cpp` (8 tests) covers accuracy, order, switching, and every
+  rejection path.
+- Slice boundary (documented and tested as throws naming the device):
+  no transformers, coupled/saturable/hysteretic magnetics, slew
+  (`tsw>0`), recovery (`trr/qrr/ttail`), adaptive stepping, or >512
+  unknowns (dense 3-stage solve). Nothing is silently approximated.
+- The remaining Phase 2 work below is unchanged; the next step is the
+  sparse/iterative stage solve that lifts the 512-unknown cap, then
+  adaptive control (step-doubling on the embedded stage pair or a
+  4-stage embedded Radau pair), then the analytical Jacobian and
+  zero-crossing relocation.
+
+- **Dense output / continuous extension** for Radau so `runUntil` and
+  probe sampling can land inside a step (endpoints already land exactly).
 - **Analytical Jacobian**: ∂F/∂x assembled from the closed-form
   companions — L/C/coupled/saturable/hysteresis branches carry
   explicit dI/dV terms; switches/diodes contribute state-dependent
@@ -185,13 +207,15 @@ breakpoint density) are the remaining desert.
 - Factorization cache: per-attempt refactorize; FNV signature kept
   only for the (rare) repeated-signature case in multi-stage schemes.
 - **Gates**: xval parity at equal or better step counts on all
-  fixtures; 252-test suite green; per-fixture BASELINE.md update;
+  fixtures; full suite green; per-fixture BASELINE.md update;
   AUTO detector retired for Radau runs (Radau *is* the stiff solver).
 
-Risk notes: Radau + trapezoidal histories don't compose trivially
-(needs its own stage-state plumbing, modeled on the BDF2 path);
-continuous extension must keep the exact-time event sub-stepping
-contract (`dt_sub = t_event − t_now`, sliver guard unchanged).
+Risk notes: the landed slice gives Radau its own DAE stage state
+(inductor currents promoted to unknowns) rather than reusing the
+trapezoidal histories; extended dense output must keep the exact-time
+event sub-stepping contract (`dt_sub = t_event − t_now`, sliver guard
+unchanged), and the sparse stage solve must preserve the order-5
+verification before the 512-unknown cap is lifted.
 
 ## Phase 3 — device switching fidelity (~8–10 weeks)
 

@@ -125,9 +125,12 @@ void Engine::loadNetlist(const std::string& text) {
     tStop_ = net_.tran.tstop;
     if (net_.tran.method == "AUTO")
       solver_.setIntegratorAuto(true);
+    else if (net_.tran.method == "TRBDF2")
+      solver_.setIntegrator(Integrator::TrBdf2);
+    else if (net_.tran.method == "RADAU")
+      solver_.setIntegrator(Integrator::RadauIIA);
     else
-      solver_.setIntegrator(net_.tran.method == "TRBDF2" ? Integrator::TrBdf2
-                                                         : Integrator::Trapezoidal);
+      solver_.setIntegrator(Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
   refreshGateList();
@@ -154,9 +157,12 @@ void Engine::setParameter(const std::string& name, double value) {
     tStop_ = net_.tran.tstop;
     if (net_.tran.method == "AUTO")
       solver_.setIntegratorAuto(true);
+    else if (net_.tran.method == "TRBDF2")
+      solver_.setIntegrator(Integrator::TrBdf2);
+    else if (net_.tran.method == "RADAU")
+      solver_.setIntegrator(Integrator::RadauIIA);
     else
-      solver_.setIntegrator(net_.tran.method == "TRBDF2" ? Integrator::TrBdf2
-                                                         : Integrator::Trapezoidal);
+      solver_.setIntegrator(Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
   refreshGateList();

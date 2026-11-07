@@ -1,7 +1,7 @@
 // pe run: netlist in, CSV out (ngspice -b style).
 //
 //   pe run --netlist <file> [--out <csv>] [--tstop <s>] [--dt <s>]
-//          [--method trap|trbdf2|auto] [--param K=V ...] [--probe <key> ...]
+//          [--method trap|trbdf2|radau|auto] [--param K=V ...] [--probe <key> ...]
 //
 // Loads the netlist, applies .param overrides, optional .tran overrides,
 // expands .control pwm / .thermal / .etable specs found in the file,
@@ -30,7 +30,7 @@ Options:
   --out <csv>        write CSV here (default: stdout)
   --tstop <s>        stop time, overrides .tran tstop
   --dt <s>           time step, overrides .tran dt
-  --method <m>       trap (default) | trbdf2 | auto
+  --method <m>       trap (default) | trbdf2 | radau | auto
   --param K=V        .param override (repeatable)
   --probe <key>      probe column like v:3 or gate:S1 (repeatable;
                      default: all voltage probes)
@@ -89,8 +89,8 @@ int runNetlistImpl(const pe::ParsedArgs& args, std::ostream& out, std::ostream& 
     return 2;
   }
   const std::string method = args.get("method", "trap");
-  if (method != "trap" && method != "trbdf2" && method != "auto") {
-    err << "pe run: bad --method '" << method << "' (trap|trbdf2|auto)\n";
+  if (method != "trap" && method != "trbdf2" && method != "radau" && method != "auto") {
+    err << "pe run: bad --method '" << method << "' (trap|trbdf2|radau|auto)\n";
     return 2;
   }
   // --param K=V pairs (split on first '='; V parsed now for exit-2 errors).
@@ -123,6 +123,8 @@ int runNetlistImpl(const pe::ParsedArgs& args, std::ostream& out, std::ostream& 
     }
     if (method == "trbdf2") {
       eng.setIntegrator(power_engine::Integrator::TrBdf2);
+    } else if (method == "radau") {
+      eng.setIntegrator(power_engine::Integrator::RadauIIA);
     } else if (method == "auto") {
       eng.setIntegratorAuto(true);
     }

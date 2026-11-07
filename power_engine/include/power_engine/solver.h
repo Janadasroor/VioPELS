@@ -35,7 +35,14 @@ struct SingularError : std::runtime_error {
 /// L-stable: it damps the trapezoidal Nyquist ringing that ideal
 /// switching events excite on stiff nodes, at ~2x solves per step.
 /// Opt-in per solver; histories are shared so the mode may change mid-run.
-enum class Integrator { Trapezoidal, TrBdf2 };
+/// RadauIIA is the Phase 2 implicit collocation prototype: 3-stage,
+/// order 5, L-stable, fixed-step, evaluated directly on the MNA DAE
+/// (G*y + M*dy/dt = b) with inductor currents promoted to explicit
+/// unknowns. It is deliberately restricted to the linear-stamped subset
+/// (R, C, L, ideal V/I sources, switches, diodes); transformers,
+/// coupled/saturable/hysteretic magnetics and recovery/slew timers are
+/// rejected with a clear error rather than silently approximated.
+enum class Integrator { Trapezoidal, TrBdf2, RadauIIA };
 
 /// Solver statistics for event-detection acceptance ("no missed events").
 struct SolverStats {
@@ -202,6 +209,19 @@ class TransientSolver {
   void fixedStep(double dtNew);
   /// One TR-BDF2 step of exactly dtNew (no error control). Advances t_.
   void trBdf2Step(double dtNew);
+  /// One Radau IIA (3-stage, order 5) step of exactly dtNew. Fixed-step;
+  /// throws if the circuit contains unsupported (non-linear-stamped)
+  /// devices. Advances t_.
+  void radauStep(double dtNew);
+  /// Assemble the linear DAE form G*y + M*dy/dt = b for Radau: y is the
+  /// usual MNA vector x followed by one current unknown per inductor.
+  void assembleRadauDae(Eigen::MatrixXd& G, Eigen::MatrixXd& M,
+                        Eigen::VectorXd& b) const;
+  /// Commit a Radau endpoint y (and the endpoint derivative k) to x_,
+  /// device histories, and edge state.
+  void radauCommit(const Eigen::VectorXd& y, const Eigen::VectorXd& k);
+  /// Throw a descriptive error if the circuit is outside the Radau slice.
+  void radauCheckSupported() const;
   /// One adaptive TR-BDF2 step (embedded stage-difference control).
   void embeddedStep();
   /// One converged solve at the current dt_/stage (Newton + diode loops).
@@ -273,6 +293,16 @@ class TransientSolver {
   // device count (which the size check alone would miss).
   unsigned long long topoSeen_ = 0;
   Eigen::VectorXd x_;                   // last solution
+  // Radau IIA DAE layout: y = [x_; i_L per inductor]. radauBase_ is the
+  // length of x_ (nodes + voltage-source/transformer rows); inductors are
+  // promoted to explicit current unknowns because the DAE needs dy/dt for
+  // them (the companion methods eliminate them instead).
+  std::size_t radauBase_ = 0;
+  std::vector<std::size_t> radauInductors_;  // device indices, y order
+  std::vector<int> radauLrow_;  // device -> inductor-current row (-1 none)
+  mutable Eigen::MatrixXd radauSys_;  // 3*radauM_ square stage system
+  mutable Eigen::VectorXd radauRhs_;  // 3*radauM_ stage RHS
+  mutable Eigen::VectorXd radauSol_;  // 3*radauM_ stage derivatives
   // Reused across steps: no per-step heap allocation in the hot loop.
   // Factorization objects are per cache slot (one per integrator stage):
   // a hit reuses slot factors regardless of what workA_ currently holds
