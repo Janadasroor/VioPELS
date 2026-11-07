@@ -148,6 +148,7 @@ class Engine {
 
  private:
   void refreshSolution();
+  void refreshGateList();
   void applyDueEvents(double tNow);
   void updateLosses(double dtSub);
   /// Snapshot pre-sub-step (v,i) of modeled switches/diodes for edge I/V
@@ -167,6 +168,10 @@ class Engine {
   // to_string per step).
   std::vector<int> probeNodes_;
   std::vector<std::string> probeKeys_;
+  /// Indices of gate-controlled devices (Switch, SwitchDiode) in
+  /// circuit_.devices(), snapshotted with the topology; refreshSolution
+  /// turns them into `gates["gate:<name>"]`.
+  std::vector<std::size_t> gateDevices_;
   std::vector<SwitchEvent> events_;  // sorted by .at
   // Cursor: first index not known-applied (all before it are applied).
   // The step loop's next-event search starts here and breaks at the first

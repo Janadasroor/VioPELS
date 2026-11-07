@@ -130,6 +130,7 @@ void Engine::loadNetlist(const std::string& text) {
                                                          : Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
+  refreshGateList();
   refreshSolution();
 }
 
@@ -158,6 +159,7 @@ void Engine::setParameter(const std::string& name, double value) {
                                                          : Integrator::Trapezoidal);
   }
   solver_.initialize();  // rebuild node maps for the new topology
+  refreshGateList();
   refreshSolution();
 }
 
@@ -167,12 +169,14 @@ double Engine::deviceCurrent(const std::string& name) const {
 
 void Engine::start() {
   solver_.initialize();
+  refreshGateList();
   status_ = SimulationStatus::Running;
   started_ = true;
   probeNodes_ = solver_.nodeList();
   probeKeys_.clear();
   probeKeys_.reserve(probeNodes_.size());
   solution_.probes.clear();  // drop stale keys if re-started on new topology
+  solution_.gates.clear();
   solution_.states.clear();
   solution_.states.reserve(probeNodes_.size());
   for (int n : probeNodes_) probeKeys_.push_back("v:" + std::to_string(n));
@@ -323,6 +327,17 @@ void Engine::stop() {
   if (status_ == SimulationStatus::Running) status_ = SimulationStatus::Finished;
 }
 
+void Engine::refreshGateList() {
+  gateDevices_.clear();
+  const auto& devs = circuit_.devices();
+  for (std::size_t i = 0; i < devs.size(); ++i) {
+    const auto& d = devs[i];
+    if (d.type == DeviceType::Switch || d.type == DeviceType::SwitchDiode) {
+      gateDevices_.push_back(i);
+    }
+  }
+}
+
 void Engine::refreshSolution() {
   solution_.t = solver_.time();
   solution_.states.clear();
@@ -330,6 +345,11 @@ void Engine::refreshSolution() {
     const double v = solver_.nodeVoltage(probeNodes_[k]);
     solution_.probes[probeKeys_[k]] = v;  // in place: no clear/reinsert
     solution_.states.push_back(v);
+  }
+  if (!gateDevices_.empty()) {
+    solution_.gates.clear();
+    const auto& devs = circuit_.devices();
+    for (std::size_t idx : gateDevices_) solution_.gates["gate:" + devs[idx].name] = devs[idx].closed;
   }
   for (const auto& [name, net] : thermals_) {
     solution_.probes["tj:" + name] = net.tj();

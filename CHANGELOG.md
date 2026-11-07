@@ -58,7 +58,11 @@ FullPivLU(0x0) guard fix; MSVC C4996/C4459 fixes; shooting rejects
 hysteretic memory loudly instead of converging wrong orbits.
 Declined with evidence: diode breakpoint location (straddle already
 mV-accurate; Roff-float chatter), partitioning (O(n^1.2) to n=5000,
-domain stays <100 nodes). 263 tests / 30 suites.
+domain stays <100 nodes). 264 tests / 30 suites.
+
+Typed gate probes: `Solution::gates` carries `gate:<switch>` as a bool
+(logic signal kept distinct from physical `probes`); `pe run --probe
+gate:S1` prints it as a 0/1 CSV column. 264 tests / 30 suites.
 
 Engine usability polish: MSVC C4996 crash fixed in `src/fmi/fmi_import.cpp`
 (fmi import now uses `std::ifstream` instead of raw `FILE*`/`fopen` —

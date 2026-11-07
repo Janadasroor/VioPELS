@@ -317,3 +317,38 @@ TEST(CliRun, DeterministicCsv) {
   EXPECT_FALSE(out1.str().empty());
   std::remove(path.c_str());
 }
+
+// Typed gate probes: Solution::gates carries the switch gate as a bool,
+// surfaced by `--probe gate:S1` as a 0/1 CSV column. The buck's PWM at
+// 20 kHz over 0.2 ms must show both states, and the type stays distinct
+// from the physical v:* probes in the engine API.
+TEST(CliRun, GateProbeIsTypedAndToggles) {
+  const std::string path = "pe_cli_buck_tmp.net";
+  writeFile(path, kBuck);
+  std::ostringstream out, err;
+  const int rc = pe::runNetlist(argsFor({"--netlist", path, "--probe", "gate:S1",
+                                         "--tstop", "0.0002"}),
+                                out, err);
+  EXPECT_EQ(rc, 0) << err.str();
+  const auto rows = parseCsv(out.str());
+  ASSERT_GE(rows.size(), 3u);
+  EXPECT_EQ(rows[0].size(), 2u);
+  EXPECT_EQ(rows[0][1], "gate:S1");
+  bool sawLow = false, sawHigh = false;
+  for (std::size_t r = 1; r < rows.size(); ++r) {
+    const double g = std::stod(rows[r][1]);
+    EXPECT_TRUE(g == 0.0 || g == 1.0) << "gate must be boolean, got " << g;
+    sawLow = sawLow || (g == 0.0);
+    sawHigh = sawHigh || (g == 1.0);
+  }
+  EXPECT_TRUE(sawLow);
+  EXPECT_TRUE(sawHigh);
+  // Unknown gate names still fail cleanly (usage path unchanged).
+  std::ostringstream out2, err2;
+  EXPECT_EQ(pe::runNetlist(argsFor({"--netlist", path, "--probe", "gate:NOPE",
+                                    "--tstop", "0.0002"}),
+                           out2, err2),
+            1);
+  EXPECT_NE(err2.str().find("gate:NOPE"), std::string::npos);
+  std::remove(path.c_str());
+}

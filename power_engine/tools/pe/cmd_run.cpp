@@ -32,10 +32,12 @@ Options:
   --dt <s>           time step, overrides .tran dt
   --method <m>       trap (default) | trbdf2 | auto
   --param K=V        .param override (repeatable)
-  --probe <key>      probe column like v:3 (repeatable; default: all probes)
+  --probe <key>      probe column like v:3 or gate:S1 (repeatable;
+                     default: all voltage probes)
   --help             this text
 
-CSV columns: time,<probes in sorted order>. Exit codes: 0 ok,
+CSV columns: time,<probes in sorted order>. Gate probes print the typed
+boolean control signal as 0/1. Exit codes: 0 ok,
 1 sim/runtime error, 2 usage error or unreadable input.
 )";
 
@@ -140,9 +142,13 @@ int runNetlistImpl(const pe::ParsedArgs& args, std::ostream& out, std::ostream& 
       if (!headerDone) {
         if (!wantProbes.empty()) {
           for (const auto& p : wantProbes) {
-            if (sol.probes.find(p) == sol.probes.end()) {
+            if (sol.probes.find(p) == sol.probes.end() && sol.gates.find(p) == sol.gates.end()) {
               err << "pe run: unknown probe '" << p << "' (have";
               for (const auto& [k, v] : sol.probes) {
+                (void)v;
+                err << " " << k;
+              }
+              for (const auto& [k, v] : sol.gates) {
                 (void)v;
                 err << " " << k;
               }
@@ -168,7 +174,14 @@ int runNetlistImpl(const pe::ParsedArgs& args, std::ostream& out, std::ostream& 
       std::snprintf(buf, sizeof(buf), "%.9f", sol.t);
       csv += buf;
       for (const auto& c : cols) {
-        std::snprintf(buf, sizeof(buf), "%.10g", sol.probes.at(c));
+        double v = 0.0;
+        const auto pit = sol.probes.find(c);
+        if (pit != sol.probes.end()) {
+          v = pit->second;
+        } else {
+          v = sol.gates.at(c) ? 1.0 : 0.0;
+        }
+        std::snprintf(buf, sizeof(buf), "%.10g", v);
         csv += ",";
         csv += buf;
       }
